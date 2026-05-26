@@ -1,0 +1,29 @@
+# ── IDEs / Editors ──
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.venv/
+
+# ── OS files ──
+.DS_Store
+Thumbs.db
+
+# ── Python bytecode / cache ──
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# ── Build / dist artifacts ──
+build/
+dist/
+*.egg
+
+#model files
+test*/
+*.onnx
+*.blob
+
+# ── SSHFS mounts ──
+*sshfs*/
