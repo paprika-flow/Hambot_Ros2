@@ -225,6 +225,25 @@
       </camera>
       <always_on>1</always_on>
     </sensor>
+    <sensor name="segmentation_camera" type="segmentation">
+      <pose>0 0 0 0 0 0</pose>
+      <topic>/segmentation</topic> <!-- Leading slash forces global topic -->
+      <camera>
+        <segmentation_type>semantic</segmentation_type>
+        <horizontal_fov>1.274</horizontal_fov>
+        <image>
+          <width>640</width>
+          <height>480</height>
+        </image>
+        <clip>
+          <near>0.1</near>
+          <far>10.0</far>
+        </clip>
+      </camera>
+      <always_on>1</always_on>
+      <update_rate>5</update_rate>
+      <visualize>true</visualize>
+    </sensor>
   </gazebo>
 
   <!-- ========================================== -->
