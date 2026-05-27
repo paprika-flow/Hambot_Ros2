@@ -20,6 +20,11 @@ build/
 dist/
 *.egg
 
+# ── ros build files ──
+build/
+install/
+log/
+
 #model files
 test*/
 *.onnx
@@ -27,3 +32,4 @@ test*/
 
 # ── SSHFS mounts ──
 *sshfs*/
+
