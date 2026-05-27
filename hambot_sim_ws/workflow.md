@@ -10,7 +10,10 @@ Here is your step-by-step simulation development workflow. This is designed so y
    docker compose up -d
    ```
 2. **Open the graphical interface:**
-   Go to **`http://localhost:6080/vnc.html`** in your Mac’s web browser and click **Connect**.
+   Go to 
+   ```bash
+   http://localhost:6080/vnc.html
+   ``` 
 3. **Open the code editor on your Mac host:**
    Open VS Code (or your preferred editor) on your Mac and open the local `~/hambot_sim_ws` folder. You will write all your robot's Xacro/URDF and Python code here.
 
