@@ -1,0 +1,115 @@
+<?xml version="1.0" ?>
+<sdf version="1.8">
+  <world name="campus_sidewalk">
+
+    <!-- ========================================== -->
+    <!-- 1. SIMULATION PHYSICS & SYSTEM PLUGINS     -->
+    <!-- ========================================== -->
+    <physics name="1ms" type="ignored">
+      <max_step_size>0.001</max_step_size>
+      <real_time_factor>1.0</real_time_factor>
+    </physics>
+
+    <plugin filename="ignition-gazebo-physics-system" name="ignition::gazebo::systems::Physics"/>
+    <plugin filename="ignition-gazebo-user-commands-system" name="ignition::gazebo::systems::UserCommands"/>
+    <plugin filename="ignition-gazebo-scene-broadcaster-system" name="ignition::gazebo::systems::SceneBroadcaster"/>
+    <plugin filename="ignition-gazebo-sensors-system" name="ignition::gazebo::systems::Sensors">
+      <render_engine>ogre2</render_engine>
+    </plugin>
+
+    <!-- ========================================== -->
+    <!-- 2. LIGHTING & SUN                          -->
+    <!-- ========================================== -->
+    <light type="directional" name="sun">
+      <cast_shadows>true</cast_shadows>
+      <pose>0 0 10 0 0 0</pose>
+      <diffuse>0.8 0.8 0.8 1</diffuse>
+      <specular>0.2 0.2 0.2 1</specular>
+      <attenuation>
+        <range>1000</range>
+        <constant>0.9</constant>
+        <linear>0.01</linear>
+        <quadratic>0.001</quadratic>
+      </attenuation>
+      <direction>-0.5 0.1 -0.9</direction>
+    </light>
+
+    <!-- ========================================== -->
+    <!-- 3. THE GRASS BASE (Green Box)              -->
+    <!-- ========================================== -->
+    <model name="grass_plane">
+      <static>true</static>
+      <link name="link">
+        <pose>0 0 -0.05 0 0 0</pose> <!-- Top surface sits at Z = 0.0 -->
+        <collision name="collision">
+          <geometry><box><size>15 15 0.1</size></box></geometry>
+        </collision>
+        <visual name="visual">
+          <geometry><box><size>15 15 0.1</size></box></geometry>
+          <material>
+            <ambient>0.3 0.6 0.3 1</ambient>
+            <diffuse>0.3 0.6 0.3 1</diffuse>
+          </material>
+        </visual>
+      </link>
+    </model>
+
+    <!-- ========================================== -->
+    <!-- 4. THE SIDEWALK NETWORK (Static Grey Boxes)-->
+    <!-- ========================================== -->
+    <model name="sidewalk_network">
+      <static>true</static>
+
+      <!-- Center Intersection (1.2m x 1.2m square at Origin) -->
+      <link name="intersection">
+        <pose>0 0 0.025 0 0 0</pose> <!-- Top surface sits at Z = 0.05 (5cm curb) -->
+        <collision name="col"><geometry><box><size>1.2 1.2 0.05</size></box></geometry></collision>
+        <visual name="vis">
+          <geometry><box><size>1.2 1.2 0.05</size></box></geometry>
+          <material><ambient>0.7 0.7 0.7 1</ambient><diffuse>0.7 0.7 0.7 1</diffuse></material>
+        </visual>
+      </link>
+
+      <!-- South Branch (The 5-meter straight stretch going from X = -0.6 to -5.6) -->
+      <link name="south_straight">
+        <pose>-3.1 0 0.025 0 0 0</pose>
+        <collision name="col"><geometry><box><size>5.0 1.2 0.05</size></box></geometry></collision>
+        <visual name="vis">
+          <geometry><box><size>5.0 1.2 0.05</size></box></geometry>
+          <material><ambient>0.65 0.65 0.65 1</ambient><diffuse>0.65 0.65 0.65 1</diffuse></material>
+        </visual>
+      </link>
+
+      <!-- North Branch (3-meter branch going from X = 0.6 to 3.6) -->
+      <link name="north_branch">
+        <pose>2.1 0 0.025 0 0 0</pose>
+        <collision name="col"><geometry><box><size>3.0 1.2 0.05</size></box></geometry></collision>
+        <visual name="vis">
+          <geometry><box><size>3.0 1.2 0.05</size></box></geometry>
+          <material><ambient>0.65 0.65 0.65 1</ambient><diffuse>0.65 0.65 0.65 1</diffuse></material>
+        </visual>
+      </link>
+
+      <!-- East Branch (3-meter branch going from Y = 0.6 to 3.6) -->
+      <link name="east_branch">
+        <pose>0 2.1 0.025 0 0 0</pose>
+        <collision name="col"><geometry><box><size>1.2 3.0 0.05</size></box></geometry></collision>
+        <visual name="vis">
+          <geometry><box><size>1.2 3.0 0.05</size></box></geometry>
+          <material><ambient>0.65 0.65 0.65 1</ambient><diffuse>0.65 0.65 0.65 1</diffuse></material>
+        </visual>
+      </link>
+
+      <!-- West Branch (3-meter branch going from Y = -0.6 to -3.6) -->
+      <link name="west_branch">
+        <pose>0 -2.1 0.025 0 0 0</pose>
+        <collision name="col"><geometry><box><size>1.2 3.0 0.05</size></box></geometry></collision>
+        <visual name="vis">
+          <geometry><box><size>1.2 3.0 0.05</size></box></geometry>
+          <material><ambient>0.65 0.65 0.65 1</ambient><diffuse>0.65 0.65 0.65 1</diffuse></material>
+        </visual>
+      </link>
+
+    </model>
+  </world>
+</sdf>

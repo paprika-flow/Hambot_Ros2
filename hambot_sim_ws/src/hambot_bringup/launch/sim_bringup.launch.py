@@ -7,15 +7,15 @@ from launch_ros.actions import Node
 import xacro
 
 def generate_launch_description():
-    # 1. Paths to packages
     pkg_description = get_package_share_directory('hambot_description')
+    pkg_bringup = get_package_share_directory('hambot_bringup')
     pkg_ros_gz_sim = get_package_share_directory('ros_gz_sim')
 
-    # 2. Process Xacro file to raw XML
+    # Process Xacro
     xacro_file = os.path.join(pkg_description, 'urdf', 'hambot.urdf.xacro')
     robot_description_raw = xacro.process_file(xacro_file).toxml()
 
-    # 3. Robot State Publisher Node (publishes /tf tree)
+    # Robot State Publisher
     robot_state_publisher = Node(
         package='robot_state_publisher',
         executable='robot_state_publisher',
@@ -26,28 +26,31 @@ def generate_launch_description():
         }]
     )
 
-    # 4. Include Gazebo Launch (Starts Gazebo with an empty world)
+    # Path to our newly created custom SDF world file
+    world_file = os.path.join(pkg_bringup, 'worlds', 'campus_sidewalk.sdf')
+
+    # Include Gazebo Launch (Forces server-only headless mode to save CPU, launching our custom world)
     gazebo_sim = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(pkg_ros_gz_sim, 'launch', 'gz_sim.launch.py')
         ),
-        launch_arguments={'gz_args': '-r -s empty.sdf'}.items() # -r starts simulation immediately, -s starts server mode
+        # Loads our custom sidewalk world
+        launch_arguments={'gz_args': f'-r {world_file}'}.items() 
     )
 
-    # 5. Spawn Robot Node (injects robot from /robot_description topic to Gazebo)
+    # Spawn Robot Node (Spawns robot at the back of the 5-meter sidewalk straightaway)
     spawn_robot = Node(
         package='ros_gz_sim',
         executable='create',
         arguments=[
             '-name', 'hambot',
             '-topic', 'robot_description',
-            '-x', '0.0', '-y', '0.0', '-z', '0.5'
+            '-x', '-4.5', '-y', '0.0', '-z', '0.1' # Spawn coordinates
         ],
         output='screen'
     )
 
-    # 6. ROS-Gazebo Bridge (Bridges topics between ROS 2 and Gazebo)
-    # '@' translates direction, '[' denotes topic type matching
+    # ROS-Gazebo Bridge
     bridge = Node(
         package='ros_gz_bridge',
         executable='parameter_bridge',
@@ -57,7 +60,9 @@ def generate_launch_description():
             '/scan@sensor_msgs/msg/LaserScan[ignition.msgs.LaserScan',
             '/joint_states@sensor_msgs/msg/JointState[ignition.msgs.Model',
             '/tf@tf2_msgs/msg/TFMessage[ignition.msgs.Pose_V',
-            '/clock@rosgraph_msgs/msg/Clock[ignition.msgs.Clock'
+            '/clock@rosgraph_msgs/msg/Clock[ignition.msgs.Clock',
+            '/camera/image@sensor_msgs/msg/Image[ignition.msgs.Image',
+            '/camera/points@sensor_msgs/msg/PointCloud2[ignition.msgs.PointCloudPacked',
         ],
         output='screen'
     )

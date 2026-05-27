@@ -132,7 +132,7 @@
   <joint name="camera_joint" type="fixed">
     <parent link="base_link"/>
     <child link="oak_d_lite_frame"/>
-    <origin xyz="0.23 0 0.03" rpy="0 0 0"/>
+    <origin xyz="0.23 0 0.09" rpy="0 0 0"/>
   </joint>
 
   <gazebo reference="oak_d_lite_frame">
