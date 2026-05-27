@@ -201,15 +201,9 @@
   </link>
 
   <joint name="camera_joint" type="fixed">
-<<<<<<< HEAD
-    <parent link="base_link"/>
-    <child link="oak_d_lite_frame"/>
-    <origin xyz="0.23 0 0.09" rpy="0 0 0"/>
-=======
     <parent link="camera_stand"/>
     <child link="camera_frame"/>
     <origin xyz="${camera_joint_x} 0 ${camera_joint_z}" rpy="0 0 0"/>
->>>>>>> 2aa524b (Changed the descriptor to look more similar to the)
   </joint>
 
   <gazebo reference="camera_frame">
