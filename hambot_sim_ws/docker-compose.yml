@@ -1,0 +1,19 @@
+services:
+  sim_hambot:
+    build: .
+    image: hambot_sim:${ROBOT_IMAGE_TAG}
+    container_name: hambot_sim
+    ports:
+      - "6080:80"       # Web VNC Port. Access via http://localhost:6080
+    shm_size: "512m"    # Necessary to prevent browser UI crashes
+    security_opt:
+      - seccomp=unconfined # Crucial for rendering OpenGL inside Docker
+    volumes:
+      - .:/home/ubuntu/hambot_sim_ws # Mounts your workspace to keep build cache on your Mac
+    environment:
+      - ROS_DOMAIN_ID=30
+      - RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+      # CRITICAL: Forces CPU software rendering, bypassing Apple Silicon GPU passthrough bugs
+      - LIBGL_ALWAYS_SOFTWARE=1
+    working_dir: /home/ubuntu/hambot_sim_ws
+    command: sleep infinity

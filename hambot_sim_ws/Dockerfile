@@ -1,0 +1,32 @@
+# Start from Tiryoh's ARM64-supported ROS 2 Humble VNC base image
+FROM tiryoh/ros2-desktop-vnc:humble
+
+# Keep user as root during build (tiryoh creates 'ubuntu' user dynamically at runtime)
+USER root
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install Gazebo, Nav2, SLAM, and support packages
+RUN apt-get update && apt-get install -y \
+    nano \
+    ros-humble-navigation2 \
+    ros-humble-nav2-bringup \
+    ros-humble-slam-toolbox \
+    ros-humble-ros-gz \
+    ros-humble-ros2-control \
+    ros-humble-ros2-controllers \
+    ros-humble-xacro \
+    ros-humble-rmw-cyclonedds-cpp \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN apt-get update && apt-get install -y \
+    # add new packages here
+
+    # here
+    && rm -rf /var/lib/apt/lists/*
+
+# Set up the workspace directory inside the container
+WORKDIR /home/ubuntu/hambot_sim_ws
+
+# Force-source your workspace environment system-wide 
+# (This ensures it loads automatically for the 'ubuntu' user at runtime)
+RUN echo "source /home/ubuntu/hambot_sim_ws/install/setup.bash" >> /etc/bash.bashrc
