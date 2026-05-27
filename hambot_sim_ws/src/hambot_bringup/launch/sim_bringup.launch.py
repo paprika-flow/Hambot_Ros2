@@ -63,13 +63,24 @@ def generate_launch_description():
             '/clock@rosgraph_msgs/msg/Clock[ignition.msgs.Clock',
             '/camera/image@sensor_msgs/msg/Image[ignition.msgs.Image',
             '/camera/points@sensor_msgs/msg/PointCloud2[ignition.msgs.PointCloudPacked',
+            '/segmentation/labels_map@sensor_msgs/msg/Image[ignition.msgs.Image',
+            '/segmentation/colored_map@sensor_msgs/msg/Image[ignition.msgs.Image',
         ],
         output='screen'
+    )
+
+    # 7. Custom Sidewalk Segmenter Node (Processes raw VNC images into a binary mask)
+    sidewalk_segmenter = Node(
+        package='hambot_bringup',
+        executable='sidewalk_segmenter.py', # Matches the filename we installed in CMake
+        output='screen',
+        parameters=[{'use_sim_time': True}] # Crucial: ensures OpenCV/image timestamps match simulation clock
     )
 
     return LaunchDescription([
         robot_state_publisher,
         gazebo_sim,
         spawn_robot,
-        bridge
+        bridge,
+        sidewalk_segmenter
     ])
