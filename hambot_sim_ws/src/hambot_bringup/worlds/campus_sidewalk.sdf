@@ -35,7 +35,7 @@
     </light>
 
     <!-- ========================================== -->
-    <!-- 3. THE GRASS BASE (Green Box)              -->
+    <!-- 3. THE GRASS BASE (Label 2)                -->
     <!-- ========================================== -->
     <model name="grass_plane">
       <static>true</static>
@@ -50,63 +50,81 @@
             <ambient>0.3 0.6 0.3 1</ambient>
             <diffuse>0.3 0.6 0.3 1</diffuse>
           </material>
+          <plugin filename="ignition-gazebo-label-system" name="ignition::gazebo::systems::Label">
+            <label>2</label> <!-- 2 = Grass -->
+          </plugin>
         </visual>
       </link>
     </model>
 
     <!-- ========================================== -->
-    <!-- 4. THE SIDEWALK NETWORK (Static Grey Boxes)-->
+    <!-- 4. THE SIDEWALK NETWORK (Label 1)          -->
     <!-- ========================================== -->
     <model name="sidewalk_network">
       <static>true</static>
 
       <!-- Center Intersection (1.2m x 1.2m square at Origin) -->
       <link name="intersection">
-        <pose>0 0 0.025 0 0 0</pose> <!-- Top surface sits at Z = 0.05 (5cm curb) -->
+        <pose>0 0 -0.005 0 0 0</pose> <!-- Top surface sits at Z = 0.02 (2cm lip) -->
         <collision name="col"><geometry><box><size>1.2 1.2 0.05</size></box></geometry></collision>
         <visual name="vis">
           <geometry><box><size>1.2 1.2 0.05</size></box></geometry>
           <material><ambient>0.7 0.7 0.7 1</ambient><diffuse>0.7 0.7 0.7 1</diffuse></material>
+          <plugin filename="ignition-gazebo-label-system" name="ignition::gazebo::systems::Label">
+            <label>1</label> <!-- 1 = Sidewalk -->
+          </plugin>
         </visual>
       </link>
 
       <!-- South Branch (The 5-meter straight stretch going from X = -0.6 to -5.6) -->
       <link name="south_straight">
-        <pose>-3.1 0 0.025 0 0 0</pose>
+        <pose>-3.1 0 -0.005 0 0 0</pose>
         <collision name="col"><geometry><box><size>5.0 1.2 0.05</size></box></geometry></collision>
         <visual name="vis">
           <geometry><box><size>5.0 1.2 0.05</size></box></geometry>
           <material><ambient>0.65 0.65 0.65 1</ambient><diffuse>0.65 0.65 0.65 1</diffuse></material>
+          <plugin filename="ignition-gazebo-label-system" name="ignition::gazebo::systems::Label">
+            <label>1</label> <!-- 1 = Sidewalk -->
+          </plugin>
         </visual>
       </link>
 
       <!-- North Branch (3-meter branch going from X = 0.6 to 3.6) -->
       <link name="north_branch">
-        <pose>2.1 0 0.025 0 0 0</pose>
+        <pose>2.1 0 -0.005 0 0 0</pose>
         <collision name="col"><geometry><box><size>3.0 1.2 0.05</size></box></geometry></collision>
         <visual name="vis">
           <geometry><box><size>3.0 1.2 0.05</size></box></geometry>
           <material><ambient>0.65 0.65 0.65 1</ambient><diffuse>0.65 0.65 0.65 1</diffuse></material>
+          <plugin filename="ignition-gazebo-label-system" name="ignition::gazebo::systems::Label">
+            <label>1</label> <!-- 1 = Sidewalk -->
+          </plugin>
         </visual>
       </link>
 
       <!-- East Branch (3-meter branch going from Y = 0.6 to 3.6) -->
       <link name="east_branch">
-        <pose>0 2.1 0.025 0 0 0</pose>
+        <pose>0 2.1 -0.005 0 0 0</pose>
         <collision name="col"><geometry><box><size>1.2 3.0 0.05</size></box></geometry></collision>
         <visual name="vis">
           <geometry><box><size>1.2 3.0 0.05</size></box></geometry>
           <material><ambient>0.65 0.65 0.65 1</ambient><diffuse>0.65 0.65 0.65 1</diffuse></material>
+          <plugin filename="ignition-gazebo-label-system" name="ignition::gazebo::systems::Label">
+            <label>1</label> <!-- 1 = Sidewalk -->
+          </plugin>
         </visual>
       </link>
 
       <!-- West Branch (3-meter branch going from Y = -0.6 to -3.6) -->
       <link name="west_branch">
-        <pose>0 -2.1 0.025 0 0 0</pose>
+        <pose>0 -2.1 -0.005 0 0 0</pose>
         <collision name="col"><geometry><box><size>1.2 3.0 0.05</size></box></geometry></collision>
         <visual name="vis">
           <geometry><box><size>1.2 3.0 0.05</size></box></geometry>
           <material><ambient>0.65 0.65 0.65 1</ambient><diffuse>0.65 0.65 0.65 1</diffuse></material>
+          <plugin filename="ignition-gazebo-label-system" name="ignition::gazebo::systems::Label">
+            <label>1</label> <!-- 1 = Sidewalk -->
+          </plugin>
         </visual>
       </link>
 
