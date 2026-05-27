@@ -32,5 +32,5 @@ echo "Saved version $NEW_VERSION to .env file."
 echo "Starting Docker build..."
 echo ""
 
-# 4. Run the Docker Compose build
+# Run the Docker Compose build
 docker compose build

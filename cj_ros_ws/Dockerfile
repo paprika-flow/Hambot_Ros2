@@ -29,8 +29,12 @@ RUN apt-get update && apt-get install -y \
 # Install specific ROS 2 and hardware drivers
 RUN apt-get update && apt-get install -y \
     ros-humble-depthai-ros-driver \
+    # add new packages here
+
     # ros-humble-navigation2 \
     # ros-humble-slam-toolbox \
+
+    # here
     && rm -rf /var/lib/apt/lists/*
 
 # Set up the workspace directory inside the container

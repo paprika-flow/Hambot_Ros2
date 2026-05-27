@@ -1,5 +1,5 @@
 ```
-1. Write/Edit code in VS Code on your Mac (Synced to the Pi)
+1. Write/Edit code in VS Code (Synced to the Pi)
                              │
                              ▼
   2. Compile instantly inside the running container (colcon build)

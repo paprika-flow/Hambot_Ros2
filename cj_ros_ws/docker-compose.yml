@@ -1,16 +1,18 @@
 services:
   ros_hambot:
-    image: ros:humble-ros-base
+    build: .             # Tells Docker Compose to build the local Dockerfile
+    image: hambot:${ROBOT_IMAGE_TAG} # Uses the version from the .env file managed by build.sh
     container_name: hambot
     restart: always
     network_mode: host
     ipc: host
-    privileged: true  # Grants container access to GPIO, USB, and Serial ports
+    privileged: true     # Grants container access to GPIO, USB, and Serial ports
     volumes:
       - /dev:/dev
       - /sys:/sys
-      - ./src:/workspace/src
+      - .:/workspace     # Mounts the whole folder to preserve the colcon build/install cache on the host
     environment:
-      - ROS_DOMAIN_ID=30 # Change this to any ID (0-232) to keep traffic isolated to your robot
+      - ROS_DOMAIN_ID=30 # Keeps traffic isolated to your robot
+      - RMW_IMPLEMENTATION=rmw_cyclonedds_cpp # Switches to the highly stable CycloneDDS middleware
     working_dir: /workspace
     command: sleep infinity
