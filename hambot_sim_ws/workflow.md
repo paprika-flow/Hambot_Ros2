@@ -80,7 +80,7 @@ If you made any changes lock in any new packages you added to your `Dockerfile`:
    docker compose down
    
    # Run the custom build script to increment your version and bake the changes if you made any changes
-   ./build.sh
+   ./build_docker.sh
    ```
 3. Type your new version number (e.g., `1.1.0`) and press **`Enter`**.
 4. To verify your new container is built and running with the new packages permanently saved:
