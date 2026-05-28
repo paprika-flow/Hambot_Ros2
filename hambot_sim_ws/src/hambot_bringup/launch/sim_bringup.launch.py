@@ -29,13 +29,13 @@ def generate_launch_description():
     # Path to our newly created custom SDF world file
     world_file = os.path.join(pkg_bringup, 'worlds', 'campus_sidewalk.sdf')
 
-    # Include Gazebo Launch (Forces server-only headless mode to save CPU, launching our custom world)
+    # Include Gazebo Launch 
     gazebo_sim = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(pkg_ros_gz_sim, 'launch', 'gz_sim.launch.py')
         ),
         # Loads our custom sidewalk world
-        launch_arguments={'gz_args': f'-r {world_file}'}.items() 
+        launch_arguments={'gz_args': f'-r {world_file}'}.items()  # use -s to run as serverless mode: 'gz_args': f'-r -s {world_file}'}
     )
 
     # Spawn Robot Node (Spawns robot at the back of the 5-meter sidewalk straightaway)
@@ -69,7 +69,7 @@ def generate_launch_description():
         output='screen'
     )
 
-    # 7. Custom Sidewalk Segmenter Node (Processes raw VNC images into a binary mask)
+    # Custom Sidewalk Segmenter Node (Processes raw VNC images into a binary mask)
     sidewalk_segmenter = Node(
         package='hambot_bringup',
         executable='sidewalk_segmenter.py', # Matches the filename we installed in CMake
