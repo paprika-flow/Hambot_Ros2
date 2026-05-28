@@ -77,10 +77,19 @@ def generate_launch_description():
         parameters=[{'use_sim_time': True}] # Crucial: ensures OpenCV/image timestamps match simulation clock
     )
 
+    # Local Navigator Node (Centering Control)
+    centroid_navigator = Node(
+        package='hambot_bringup',
+        executable='centroid_navigator.py',
+        output='screen',
+        parameters=[{'use_sim_time': True}]
+    )
+
     return LaunchDescription([
         robot_state_publisher,
         gazebo_sim,
         spawn_robot,
         bridge,
-        sidewalk_segmenter
+        sidewalk_segmenter,
+        centroid_navigator
     ])

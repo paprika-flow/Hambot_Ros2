@@ -28,6 +28,7 @@ install(DIRECTORY launch worlds DESTINATION share/${PROJECT_NAME})
 # Install Python scripts as executable nodes
 install(PROGRAMS
   hambot_bringup/sidewalk_segmenter.py
+  hambot_bringup/centroid_navigator.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
