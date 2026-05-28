@@ -69,7 +69,9 @@ If you need a new ROS 2 tool or package (e.g., `ros-humble-joint-state-publisher
 ---
 
 ### 5. End of Session (Baking Your Changes)
-When you are ready to stop for the day and lock in any new packages you added to your `Dockerfile`:
+When you are ready to stop for the day you can stop the container.
+
+If you made any changes lock in any new packages you added to your `Dockerfile`:
 
 1. Close the running terminals inside your VNC window.
 2. In your Mac's host terminal (outside of VNC), run:
@@ -77,7 +79,7 @@ When you are ready to stop for the day and lock in any new packages you added to
    cd ~/hambot_sim_ws
    docker compose down
    
-   # Run the custom build script to increment your version and bake the changes
+   # Run the custom build script to increment your version and bake the changes if you made any changes
    ./build.sh
    ```
 3. Type your new version number (e.g., `1.1.0`) and press **`Enter`**.
