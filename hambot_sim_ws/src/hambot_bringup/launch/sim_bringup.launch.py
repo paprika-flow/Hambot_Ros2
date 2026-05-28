@@ -26,7 +26,7 @@ def generate_launch_description():
         }]
     )
 
-    # Path to our newly created custom SDF world file
+    # Path to newly created custom SDF world file
     world_file = os.path.join(pkg_bringup, 'worlds', 'campus_sidewalk.sdf')
 
     # Include Gazebo Launch 
@@ -34,21 +34,21 @@ def generate_launch_description():
         PythonLaunchDescriptionSource(
             os.path.join(pkg_ros_gz_sim, 'launch', 'gz_sim.launch.py')
         ),
-        # Loads our custom sidewalk world
-        launch_arguments={'gz_args': f'-r {world_file}'}.items()  # use -s to run as serverless mode: 'gz_args': f'-r -s {world_file}'}
+        launch_arguments={'gz_args': f'-r {world_file}'}.items()
     )
 
-    # Spawn Robot Node (Spawns robot at the back of the 5-meter sidewalk straightaway)
+    # Spawn Robot Node
     spawn_robot = Node(
         package='ros_gz_sim',
         executable='create',
         arguments=[
             '-name', 'hambot',
             '-topic', 'robot_description',
-            '-x', '-4.5', '-y', '0.0', '-z', '0.1' # Spawn coordinates
+            '-x', '-4.5', '-y', '0.0', '-z', '0.1'
         ],
         output='screen'
     )
+
 
     # ROS-Gazebo Bridge
     bridge = Node(
@@ -65,16 +65,35 @@ def generate_launch_description():
             '/camera/points@sensor_msgs/msg/PointCloud2[ignition.msgs.PointCloudPacked',
             '/segmentation/labels_map@sensor_msgs/msg/Image[ignition.msgs.Image',
             '/segmentation/colored_map@sensor_msgs/msg/Image[ignition.msgs.Image',
+             # --- BRIDGES TO VIEW OUTPUTS BACK IN GAZEBO ---
+            # Bridge the Sidewalk Mask from ROS 2 -> Gazebo (if not already present)
+            '/camera/sidewalk_mask@sensor_msgs/msg/Image]ignition.msgs.Image',
+            # Bridge the Voronoi Debug Image from ROS 2 -> Gazebo
+            '/voronoi/debug_image@sensor_msgs/msg/Image]ignition.msgs.Image',
         ],
         output='screen'
     )
 
-    # Custom Sidewalk Segmenter Node (Processes raw VNC images into a binary mask)
+    # Custom Sidewalk Segmenter Node
     sidewalk_segmenter = Node(
         package='hambot_bringup',
-        executable='sidewalk_segmenter.py', # Matches the filename we installed in CMake
+        executable='sidewalk_segmenter.py',
         output='screen',
-        parameters=[{'use_sim_time': True}] # Crucial: ensures OpenCV/image timestamps match simulation clock
+        parameters=[{'use_sim_time': True}]
+    )
+
+    # Voronoi Path Planner Node (Processes segmenter masks into skeleton lanes)
+    voronoi_path_planner = Node(
+        package='hambot_bringup',
+        executable='voronoi_path_planner.py',
+        output='screen',
+        parameters=[{
+            'use_sim_time': True,
+            'input_topic': '/camera/sidewalk_mask',
+            'target_gray': 255,  # Matches the binary output scale of the segmenter node
+            'resize_width': 960,
+            'resize_height': 720
+        }]
     )
 
     # Local Navigator Node (Centering Control)
@@ -91,5 +110,6 @@ def generate_launch_description():
         spawn_robot,
         bridge,
         sidewalk_segmenter,
+        voronoi_path_planner,
         centroid_navigator
     ])

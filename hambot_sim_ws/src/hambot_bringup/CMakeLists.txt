@@ -29,6 +29,7 @@ install(DIRECTORY launch worlds DESTINATION share/${PROJECT_NAME})
 install(PROGRAMS
   hambot_bringup/sidewalk_segmenter.py
   hambot_bringup/centroid_navigator.py
+  hambot_bringup/voronoi_path_planner.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
