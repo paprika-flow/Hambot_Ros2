@@ -1,0 +1,15 @@
+# NavigateToBuilding.action
+# High-level campus navigation goal
+
+# Goal: which building to go to
+string building_name
+
+---
+# Result: whether we arrived
+bool success
+string message
+
+---
+# Feedback: progress updates
+string current_zone
+float32 distance_remaining

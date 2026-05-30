@@ -1,0 +1,20 @@
+services:
+  hambot_robot:
+    build:
+      context: .
+      dockerfile: Dockerfile.robot
+    image: hambot_robot:1.2
+    container_name: hambot
+    restart: always
+    network_mode: host
+    ipc: host
+    privileged: true
+    volumes:
+      - /dev:/dev
+      - /sys:/sys
+      - .:/workspace
+    environment:
+      - ROS_DOMAIN_ID=30
+      - RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+    working_dir: /workspace
+    command: sleep infinity

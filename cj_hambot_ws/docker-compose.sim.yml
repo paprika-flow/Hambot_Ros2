@@ -1,0 +1,20 @@
+services:
+  hambot_sim:
+    build:
+      context: .
+      dockerfile: Dockerfile.sim
+    image: hambot_sim:1.1
+    container_name: hambot_sim
+    ports:
+      - "6080:80"
+    shm_size: "512m"
+    security_opt:
+      - seccomp=unconfined
+    volumes:
+      - .:/home/ubuntu/cj_hambot_ws
+    environment:
+      - ROS_DOMAIN_ID=30
+      - RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+      - LIBGL_ALWAYS_SOFTWARE=${LIBGL_ALWAYS_SOFTWARE:-0}
+    working_dir: /home/ubuntu/cj_hambot_ws
+    command: sleep infinity
