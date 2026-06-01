@@ -30,6 +30,7 @@ install(PROGRAMS
   hambot_bringup/sidewalk_segmenter.py
   hambot_bringup/centroid_navigator.py
   hambot_bringup/voronoi_path_planner.py
+  hambot_bringup/costmap_navigator.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
