@@ -108,13 +108,19 @@ class CostmapGrid:
 
     # ── Unknown fill ────────────────────────────────────────────
 
-    def fill_unknown_forward(self):
-        """All unknown cells within forward range → free."""
+    def fill_unknown_forward(self, seen_cols_per_row):
+        """
+        Fill unknown cells only within camera's actual visible column range.
+        seen_cols_per_row: dict row->(left_col, right_col) of projected pixels.
+        Unknown cells outside these columns stay unknown.
+        """
         for r in range(self.rows):
-            x = (self.rows - 1 - r) * self.cell_size
-            if 0 < x <= self.map_fwd:
-                row = self.costmap[r, :]
-                row[row == 254] = 0
+            if r not in seen_cols_per_row:
+                continue
+            left, right = seen_cols_per_row[r]
+            row = self.costmap[r, :]
+            unk = (row[left:right+1] == 254)
+            row[left:right+1][unk] = 0
 
     # ── Goal search ─────────────────────────────────────────────
 
@@ -315,6 +321,22 @@ class CostmapNavigator(Node):
         self.px_col[self.px_col >= self.cols] = -1
         self.px_valid = (self.px_row >= 0) & (self.px_col >= 0)
 
+        # Build column range per row for unknown fill
+        self.seen_cols_per_row = {}
+        if np.any(self.px_valid):
+            seen_rows = self.px_row[self.px_valid]
+            seen_cols = self.px_col[self.px_valid]
+            for r, c in zip(seen_rows, seen_cols):
+                if r not in self.seen_cols_per_row:
+                    self.seen_cols_per_row[r] = [c, c]
+                else:
+                    if c < self.seen_cols_per_row[r][0]:
+                        self.seen_cols_per_row[r][0] = c
+                    if c > self.seen_cols_per_row[r][1]:
+                        self.seen_cols_per_row[r][1] = c
+        # Convert to tuples
+        self.seen_cols_per_row = {r: tuple(v) for r, v in self.seen_cols_per_row.items()}
+
     # ── Callbacks ───────────────────────────────────────────────
 
     def mask_callback(self, msg):
@@ -336,7 +358,7 @@ class CostmapNavigator(Node):
             grass_mask = (self.grid.costmap == 255)
             self.grid.inflate_edges(grass_mask)
             self.grid.apply_lidar_gradient(self.latest_lidar_points, self.robot_cell)
-            self.grid.fill_unknown_forward()
+            self.grid.fill_unknown_forward(self.seen_cols_per_row)
             self.grid.costmap[self.robot_cell] = 0
 
             # 3. Goal
