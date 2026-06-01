@@ -168,7 +168,7 @@ def generate_launch_description():
             'kp_angular': 0.8,
             'lidar_topic': '/scan',
             'robot_radius': 0.15,
-            'obstacle_inflation': 0.30,
+            'obstacle_inflation': 0.15,
         }]
     )
 

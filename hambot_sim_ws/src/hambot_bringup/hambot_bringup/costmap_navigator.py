@@ -125,11 +125,15 @@ class CostmapGrid:
     # ── Goal search ─────────────────────────────────────────────
 
     def find_goal(self, goal_row):
-        """Nearest center sidewalk cell around goal_row."""
+        """
+        Find most-center traversable cell near goal_row.
+        Accepts any cell with cost < 200 (edge gradient fine, lethal blocked).
+        Goal shifts off-center if obstacle blocks middle — A* routes around.
+        """
         lo = min(self.rows - 2, goal_row + 5)
         hi = max(1, goal_row - 5)
         for r in range(lo, hi - 1, -1):
-            sw = np.where(self.costmap[r, :] == 0)[0]
+            sw = np.where(self.costmap[r, :] < 230)[0]
             if len(sw) > 0:
                 center = self.cols // 2
                 best = sw[np.argmin(np.abs(sw - center))]
