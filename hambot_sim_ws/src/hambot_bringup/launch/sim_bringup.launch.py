@@ -27,7 +27,7 @@ def generate_launch_description():
     )
 
     # Path to newly created custom SDF world file
-    world_file = os.path.join(pkg_bringup, 'worlds', 'campus_sidewalk.sdf')
+    world_file = os.path.join(pkg_bringup, 'worlds', 'campus_map.sdf')
 
     # Include Gazebo Launch 
     gazebo_sim = IncludeLaunchDescription(
