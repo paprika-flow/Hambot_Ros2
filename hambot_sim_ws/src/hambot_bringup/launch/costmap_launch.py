@@ -166,6 +166,9 @@ def generate_launch_description():
             'cam_height_px': 480,
             'linear_speed': 0.25,
             'kp_angular': 0.8,
+            'lidar_topic': '/scan',
+            'robot_radius': 0.15,
+            'obstacle_inflation': 0.30,
         }]
     )
 
