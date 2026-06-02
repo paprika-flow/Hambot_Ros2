@@ -381,7 +381,7 @@ def interpreting_skeletons(skeleton_lines, dict_ridge_points, vor, straight_path
     else:
         _, best_possible_path, best_angle = find_straight_path(path_lines, vor, straight_path)
     
-    return path_lines, best_angle, area_percentage_difference, best_possible_path, side_vectors
+    return path_lines, best_angle, area_percentage_difference, best_possible_path, side_vectors, area_left, area_right
 
 # =====================================================================
 # ROS 2 NODE INTERFACE
@@ -413,6 +413,10 @@ class VoronoiPathPlanner(Node):
         self.angle_pub = self.create_publisher(Float32, '/voronoi/best_angle', 10)
         self.area_diff_pub = self.create_publisher(Float32, '/voronoi/area_difference', 10)
         self.best_path_pub = self.create_publisher(PoseArray, '/voronoi/best_path', 10)
+        
+        # --- ADDED: Publishers for individual side-vector areas ---
+        self.area_left_pub = self.create_publisher(Float32, '/voronoi/area_left', 10)
+        self.area_right_pub = self.create_publisher(Float32, '/voronoi/area_right', 10)
         
         # Subscriber (Natively decodes image arrays to bypass cv_bridge Python/NumPy ABI mismatches) [2]
         self.mask_sub = self.create_subscription(
@@ -488,9 +492,10 @@ class VoronoiPathPlanner(Node):
                 return
 
             # Compute target planning vectors
-            paths, best_angle, area_percentage_diff, best_path, side_vectors = interpreting_skeletons(
+            paths, best_angle, area_percentage_diff, best_path, side_vectors, area_left, area_right = interpreting_skeletons(
                 skeleton_lines, dict_ridge_points, vor, self.prev_best_path_coords
             )
+
 
             # Retain coordinate state track history
             if best_path is not None:
@@ -511,6 +516,16 @@ class VoronoiPathPlanner(Node):
             area_msg = Float32()
             area_msg.data = float(area_percentage_diff)
             self.area_diff_pub.publish(area_msg)
+
+            # --- ADDED: Publish raw left and right areas ---
+            area_left_msg = Float32()
+            area_left_msg.data = float(area_left)
+            self.area_left_pub.publish(area_left_msg)
+
+            area_right_msg = Float32()
+            area_right_msg.data = float(area_right)
+            self.area_right_pub.publish(area_right_msg)
+
 
             # 6. Build and publish visual debug mapping
             debug_bgr = self.generate_debug_image(
