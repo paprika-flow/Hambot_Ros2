@@ -17,7 +17,7 @@ import heapq
 
 
 # ════════════════════════════════════════════════════════════════
-# COSTMAP GRID  (pure numpy, no ROS)
+# COSTMAP GRID 
 # ════════════════════════════════════════════════════════════════
 
 class CostmapGrid:
@@ -133,7 +133,7 @@ class CostmapGrid:
         lo = min(self.rows - 2, goal_row + 5)
         hi = max(1, goal_row - 5)
         for r in range(lo, hi - 1, -1):
-            sw = np.where(self.costmap[r, :] < 230)[0]
+            sw = np.where(self.costmap[r, :] < 200)[0]
             if len(sw) > 0:
                 center = self.cols // 2
                 best = sw[np.argmin(np.abs(sw - center))]
@@ -282,6 +282,11 @@ class CostmapNavigator(Node):
         self.create_subscription(LaserScan, lidar_topic, self.lidar_callback, 10)
         self.vel_pub = self.create_publisher(Twist, '/cmd_vel', 10)
         self.debug_pub = self.create_publisher(Image, '/costmap/debug_image', 10)
+        self.overlay_pub = self.create_publisher(Image, '/costmap/overlay_image', 10)
+
+        # Store last mask for overlay
+        self.last_mask_rgb = None
+        self.last_mask_header = None
 
         self.get_logger().info(f'Started. Grid: {self.rows}x{self.cols}, sub: {seg_topic}')
 
@@ -341,6 +346,19 @@ class CostmapNavigator(Node):
         # Convert to tuples
         self.seen_cols_per_row = {r: tuple(v) for r, v in self.seen_cols_per_row.items()}
 
+        # Build reverse lookup: costmap cell (r,c) → first pixel (v,u) that maps to it
+        self.cell_to_pixel = {}
+        if np.any(self.px_valid):
+            valid_flat = np.where(self.px_valid.ravel())[0]
+            for idx in valid_flat:
+                v = idx // W
+                u = idx % W
+                r = self.px_row[v, u]
+                c = self.px_col[v, u]
+                key = (r, c)
+                if key not in self.cell_to_pixel:
+                    self.cell_to_pixel[key] = (v, u)
+
     # ── Callbacks ───────────────────────────────────────────────
 
     def mask_callback(self, msg):
@@ -357,7 +375,16 @@ class CostmapNavigator(Node):
                 self.get_logger().warn(f'Unknown encoding: {msg.encoding}')
                 return
 
-            # 2. Pipeline
+            # 2. Store original for overlay
+            if msg.encoding == 'mono8':
+                self.last_mask_rgb = np.stack([mask, mask, mask], axis=-1)
+            elif msg.encoding == 'bgr8':
+                self.last_mask_rgb = raw[:, :, ::-1].copy()  # BGR→RGB
+            else:
+                self.last_mask_rgb = raw.copy()  # already rgb8
+            self.last_mask_header = msg.header
+
+            # 3. Pipeline
             self.grid.fill_from_camera(mask, self.px_valid, self.px_row, self.px_col, self.robot_cell)
             grass_mask = (self.grid.costmap == 255)
             self.grid.inflate_edges(grass_mask)
@@ -370,6 +397,7 @@ class CostmapNavigator(Node):
             if goal is None:
                 self.get_logger().warn('No goal found', throttle_duration_sec=2.0)
                 self._publish_debug(None, None)
+                self._publish_overlay(None, None)
                 self._publish_stop()
                 return
 
@@ -378,6 +406,7 @@ class CostmapNavigator(Node):
             if path is None or len(path) < 2:
                 self.get_logger().warn('A* failed', throttle_duration_sec=1.0)
                 self._publish_debug(None, goal)
+                self._publish_overlay(None, goal)
                 self._publish_stop()
                 return
 
@@ -388,6 +417,7 @@ class CostmapNavigator(Node):
                 throttle_duration_sec=1.0
             )
             self._publish_debug(path, goal)
+            self._publish_overlay(path, goal)
 
         except Exception as e:
             self.get_logger().error(f'Error: {e}')
@@ -444,6 +474,82 @@ class CostmapNavigator(Node):
         twist.angular.z = final
         self.vel_pub.publish(twist)
         return twist
+
+    def _publish_overlay(self, path, goal):
+        """
+        Project costmap colors + path back onto the original camera image.
+        Each pixel in seg image maps to a costmap cell → color that pixel.
+        """
+        if self.last_mask_rgb is None:
+            return
+
+        overlay = self.last_mask_rgb.copy().astype(np.uint8)  # H x W x 3 (640x480)
+        H_img, W_img = overlay.shape[:2]
+
+        # Build cost-colored image in camera space
+        valid = self.px_valid
+        rows_v = self.px_row[valid]
+        cols_v = self.px_col[valid]
+        costs = self.grid.costmap[rows_v, cols_v]
+
+        # Map pixel (u,v) to (r,c) via projection table
+        # For each valid pixel, color it by cost
+        overlay_r = overlay[:, :, 0]
+        overlay_g = overlay[:, :, 1]
+        overlay_b = overlay[:, :, 2]
+
+        # Sidewalk (cost 0) → green tint
+        sw = costs == 0
+        if np.any(sw):
+            idx = np.where(valid)
+            u_idx = idx[1][sw]
+            v_idx = idx[0][sw]
+            overlay_g[v_idx, u_idx] = np.minimum(overlay_g[v_idx, u_idx].astype(np.uint16) + 80, 255).astype(np.uint8)
+
+        # Edge (cost 1-99) → orange tint
+        edge = (costs > 0) & (costs < 100)
+        if np.any(edge):
+            idx = np.where(valid)
+            u_idx = idx[1][edge]
+            v_idx = idx[0][edge]
+            frac = costs[edge].astype(np.float32) / 100.0
+            # Add red channel
+            overlay_r[v_idx, u_idx] = np.minimum(
+                overlay_r[v_idx, u_idx].astype(np.uint16) + (frac * 150).astype(np.uint16), 255
+            ).astype(np.uint8)
+            # Reduce green channel slightly
+            overlay_g[v_idx, u_idx] = (overlay_g[v_idx, u_idx].astype(np.uint16) * 0.7).astype(np.uint8)
+
+        # Lethal (cost 255) → red tint
+        lethal = costs == 255
+        if np.any(lethal):
+            idx = np.where(valid)
+            u_idx = idx[1][lethal]
+            v_idx = idx[0][lethal]
+            overlay_r[v_idx, u_idx] = np.minimum(
+                overlay_r[v_idx, u_idx].astype(np.uint16) + 150, 255
+            ).astype(np.uint8)
+            overlay_g[v_idx, u_idx] = (overlay_g[v_idx, u_idx].astype(np.uint16) * 0.3).astype(np.uint8)
+            overlay_b[v_idx, u_idx] = (overlay_b[v_idx, u_idx].astype(np.uint16) * 0.3).astype(np.uint8)
+
+        # Draw path in yellow — use precomputed reverse lookup
+        if path is not None:
+            for (pr, pc) in path:
+                key = (int(pr), int(pc))
+                if key in self.cell_to_pixel:
+                    vu, uu = self.cell_to_pixel[key]
+                    overlay[vu, uu] = (255, 255, 0)
+
+        # Publish
+        msg = Image()
+        msg.header = self.last_mask_header
+        msg.height = H_img
+        msg.width = W_img
+        msg.encoding = 'rgb8'
+        msg.is_bigendian = 0
+        msg.step = W_img * 3
+        msg.data = overlay.tobytes()
+        self.overlay_pub.publish(msg)
 
     def _publish_stop(self):
         self.vel_pub.publish(Twist())

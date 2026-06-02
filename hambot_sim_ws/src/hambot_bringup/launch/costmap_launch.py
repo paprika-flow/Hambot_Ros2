@@ -135,6 +135,7 @@ def generate_launch_description():
             # ROS 2 → Gazebo (debug display)
             '/camera/sidewalk_mask@sensor_msgs/msg/Image]ignition.msgs.Image',
             '/costmap/debug_image@sensor_msgs/msg/Image]ignition.msgs.Image',
+            '/costmap/overlay_image@sensor_msgs/msg/Image]ignition.msgs.Image',
         ],
         output='screen',
     )
@@ -167,7 +168,7 @@ def generate_launch_description():
             'linear_speed': 0.25,
             'kp_angular': 0.8,
             'lidar_topic': '/scan',
-            'robot_radius': 0.15,
+            'robot_radius': 0.30,
             'obstacle_inflation': 0.15,
         }]
     )
