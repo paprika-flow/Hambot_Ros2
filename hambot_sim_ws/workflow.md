@@ -87,3 +87,48 @@ If you made any changes lock in any new packages you added to your `Dockerfile`:
    ```bash
    docker compose up -d
    ```
+
+---
+
+### 6. Costmap Navigation Workflow
+
+#### Start of Session
+```bash
+cd ~/hambot_sim_ws
+docker compose up -d
+```
+Then open `http://localhost:6080/vnc.html`.
+
+#### Compile & Launch Costmap Stack
+Inside VNC Terminal 1:
+```bash
+cd ~/hambot_sim_ws
+colcon build --symlink-install
+source install/setup.bash
+ros2 launch hambot_bringup costmap_launch.py start_point:=1
+```
+Change `start_point:=N` to choose spawn pose (defined in world file).
+
+#### Watching Debug Output
+- **Costmap debug image:** bridged to Gazebo — view as image topic
+- **Cmd_vel:** `ros2 topic echo /cmd_vel` in VNC Terminal 2
+- **Segmenter mask:** `ros2 topic echo /camera/sidewalk_mask --once`
+- **Costmap diagnostics:** look for `DIAG:` lines in launch terminal
+
+#### Testing Obstacle Avoidance
+Place a cube in Gazebo in robot's path. Watch A* route around it using edge cells.
+
+#### Adding New Tools 
+```bash
+# Inside VNC terminal
+sudo apt update && sudo apt install -y ros-humble-some-package
+```
+Test it. If it works, add to `Dockerfile` and bake at end of session.
+
+#### Baking Image Changes
+```bash
+# Mac host terminal
+docker compose down
+./build_docker.sh   # increment version tag
+docker compose up -d
+```
