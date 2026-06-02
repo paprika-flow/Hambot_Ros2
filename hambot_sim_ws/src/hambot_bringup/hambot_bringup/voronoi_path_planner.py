@@ -5,6 +5,7 @@ from rclpy.node import Node
 from sensor_msgs.msg import Image
 from std_msgs.msg import Float32
 from geometry_msgs.msg import PoseArray, Pose
+from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 
 import cv2
 import numpy as np
@@ -14,8 +15,9 @@ from collections import defaultdict
 from scipy.spatial import Voronoi
 from shapely.geometry import Polygon, LineString
 
+
 # =====================================================================
-# INTEGRATED GEOMETRIC MATH & SKELETONIZATION LOGIC
+# INTEGRATED GEOMETRIC MATH & OPTIMIZED WINDING TEST LOGIC
 # =====================================================================
 
 def get_midpoint(p1, p2):
@@ -28,6 +30,27 @@ def get_distance(p1, p2):
 
 def get_angle(x1, y1, x2, y2):
     return math.atan2(y2 - y1, x2 - x1) * 180 / math.pi
+
+
+def is_point_in_polygon(pt, poly_pts):
+    """Checks if a point (x, y) is inside a closed boundary using ray-casting."""
+    x, y = pt
+    inside = False
+    n = len(poly_pts)
+    if n == 0:
+        return False
+    p1x, p1y = poly_pts[0]
+    for i in range(1, n + 1):
+        p2x, p2y = poly_pts[i % n]
+        if y > min(p1y, p2y):
+            if y <= max(p1y, p2y):
+                if x <= max(p1x, p2x):
+                    if p1y != p2y:
+                        xints = (y - p1y) * (p2x - p1x) / (p2y - p1y) + p1x
+                    if p1x == p2x or x <= xints:
+                        inside = not inside
+        p1x, p1y = p2x, p2y
+    return inside
 
 
 def find_better_edge(vor, v0, v1, dict_ridge_points, ridge_points_v0, path_lines=[], side_vectors=[]):
@@ -171,6 +194,8 @@ def get_vectors_area(line, lines, dict_ridge_points, vor, side_vectors, right, r
         t_y = vor.vertices[triangle_line[1]][1] - v1_y
         v_x = v0_x - v1_x
         v_y = v0_y - v1_y
+    else:
+        return 0, side_vectors
 
     area = 0.5 * abs(v_y * t_x - v_x * t_y)
     return area, side_vectors
@@ -202,29 +227,56 @@ def get_path_lines(skeleton_lines, vor, dict_ridge_points, side_vectors):
 
 
 def get_right_lowest_and_left_lowest_line(lines, vor):
+    if not lines:
+        return None, None
+        
     sorted_lines = sorted(
         lines,
         key=lambda l: get_midpoint(vor.vertices[l[0]], vor.vertices[l[1]])[0]
     )
-    left_lines = sorted_lines[:len(sorted_lines) // 2]
-    right_lines = sorted_lines[len(sorted_lines) // 2:]
+    
+    # Handle single line edge-case safely
+    if len(sorted_lines) == 1:
+        return sorted_lines[0], sorted_lines[0]
 
-    leftmost_line, _ = min(
-        ((l, v) for l in left_lines for v in l),
-        key=lambda lv: vor.vertices[lv[1]][1]
-    )
-    rightmost_line, _ = min(
-        ((l, v) for l in right_lines for v in l),
-        key=lambda lv: vor.vertices[lv[1]][1]
-    )
+    mid_idx = len(sorted_lines) // 2
+    left_lines = sorted_lines[:mid_idx]
+    right_lines = sorted_lines[mid_idx:]
+
+    # Ensure no division results in empty arrays
+    if not left_lines:
+        left_lines = [sorted_lines[0]]
+    if not right_lines:
+        right_lines = [sorted_lines[-1]]
+
+    left_points = [(l, v) for l in left_lines for v in l]
+    right_points = [(l, v) for l in right_lines for v in l]
+
+    if not left_points:
+        leftmost_line = sorted_lines[0]
+    else:
+        leftmost_line, _ = min(
+            left_points,
+            key=lambda lv: vor.vertices[lv[1]][1]
+        )
+
+    if not right_points:
+        rightmost_line = sorted_lines[-1]
+    else:
+        rightmost_line, _ = min(
+            right_points,
+            key=lambda lv: vor.vertices[lv[1]][1]
+        )
+        
     return leftmost_line, rightmost_line
 
 
-def find_straight_path(path_lines, vor, prev_coordinates):
+def find_straight_path(path_lines, vor, prev_coordinates, scale_factor=1.0):
     if prev_coordinates is not None:
         closest_distance = float('inf')
         possible_path = None
         possible_paths = []
+        max_search_distance = 150.0 * scale_factor
         for line in path_lines:
             v0, v1 = line
             v0_x, v0_y = vor.vertices[v0]
@@ -233,7 +285,7 @@ def find_straight_path(path_lines, vor, prev_coordinates):
                 v0_x, v0_y, v1_x, v1_y = v1_x, v1_y, v0_x, v0_y
             midpoint = get_midpoint((v0_x, v0_y), (v1_x, v1_y))
             distance = math.sqrt((midpoint[0] - prev_coordinates[0][0]) ** 2 + (midpoint[1] - prev_coordinates[0][1]) ** 2)
-            if distance < closest_distance and distance < 150:
+            if distance < closest_distance and distance < max_search_distance:
                 closest_distance = distance
                 possible_path = line
                 possible_paths.append(line)
@@ -263,7 +315,7 @@ def find_straight_path(path_lines, vor, prev_coordinates):
     return possible_paths, possible_path, best_angle
 
 
-def get_skeleton_lines(vor, polygon=None):
+def get_skeleton_lines(vor, poly_pts):
     dict_ridge_points = {i: list() for i in range(len(vor.vertices))}
     ridge_lines = []
     vertex_to_edge = {}
@@ -272,9 +324,16 @@ def get_skeleton_lines(vor, polygon=None):
         if -1 in rv:
             continue
         v0, v1 = vor.vertices[rv[0]], vor.vertices[rv[1]]
-        line = LineString([v0, v1])
-        if not polygon.covers(line):
+        
+        # Fast midpoint & endpoint checks (no shapely dependency)
+        if not is_point_in_polygon(v0, poly_pts):
             continue
+        if not is_point_in_polygon(v1, poly_pts):
+            continue
+        mid = ((v0[0] + v1[0]) / 2.0, (v0[1] + v1[1]) / 2.0)
+        if not is_point_in_polygon(mid, poly_pts):
+            continue
+            
         dict_ridge_points[rv[0]].append(rv[1])
         dict_ridge_points[rv[1]].append(rv[0])
 
@@ -282,9 +341,16 @@ def get_skeleton_lines(vor, polygon=None):
         if -1 in rv:
             continue
         v0, v1 = vor.vertices[rv[0]], vor.vertices[rv[1]]
-        line = LineString([v0, v1])
-        if not polygon.covers(line):
+        
+        # Fast midpoint & endpoint checks
+        if not is_point_in_polygon(v0, poly_pts):
             continue
+        if not is_point_in_polygon(v1, poly_pts):
+            continue
+        mid = ((v0[0] + v1[0]) / 2.0, (v0[1] + v1[1]) / 2.0)
+        if not is_point_in_polygon(mid, poly_pts):
+            continue
+            
         v0, v1 = rv
 
         edge0 = vertex_to_edge.get(v0)
@@ -347,16 +413,29 @@ def get_skeleton_lines(vor, polygon=None):
     return skeleton_lines, dict_ridge_points
 
 
-def interpreting_skeletons(skeleton_lines, dict_ridge_points, vor, straight_path=None):
+def interpreting_skeletons(skeleton_lines, dict_ridge_points, vor, straight_path=None, scale_factor=1.0):
     if not skeleton_lines:
-        return [], 0.0, 0.0, None, []
+        return [], 0.0, 0.0, None, [], 0.0, 0.0
 
-    side_vectors = []
+    # Handle single line scenario to prevent min() errors
+    if len(skeleton_lines) < 2:
+        single_line = skeleton_lines[0]
+        v0, v1 = single_line
+        v0_x, v0_y = vor.vertices[v0]
+        v1_x, v1_y = vor.vertices[v1]
+        if v0_y > v1_y:
+            v0_x, v0_y, v1_x, v1_y = v1_x, v1_y, v0_x, v0_y
+        best_angle = get_angle(v0_x, v0_y, v1_x, v1_y)
+        return skeleton_lines, best_angle, 0.0, single_line, [], 0.0, 0.0
+
     left_lowest_line, right_lowest_line = get_right_lowest_and_left_lowest_line(skeleton_lines, vor)
+    if left_lowest_line is None or right_lowest_line is None:
+        return [], 0.0, 0.0, None, [], 0.0, 0.0
 
     range_val = max(vor.vertices[right_lowest_line[0]][0], vor.vertices[right_lowest_line[1]][0]) - \
                 min(vor.vertices[left_lowest_line[0]][0], vor.vertices[left_lowest_line[1]][0])
     
+    side_vectors = []
     side_vectors.append(left_lowest_line)
     side_vectors.append(right_lowest_line)
 
@@ -379,9 +458,10 @@ def interpreting_skeletons(skeleton_lines, dict_ridge_points, vor, straight_path
         best_angle = get_angle(v0_x, v0_y, v1_x, v1_y)
         best_possible_path = path_lines[0]
     else:
-        _, best_possible_path, best_angle = find_straight_path(path_lines, vor, straight_path)
+        _, best_possible_path, best_angle = find_straight_path(path_lines, vor, straight_path, scale_factor)
     
     return path_lines, best_angle, area_percentage_difference, best_possible_path, side_vectors, area_left, area_right
+
 
 # =====================================================================
 # ROS 2 NODE INTERFACE
@@ -393,9 +473,6 @@ class VoronoiPathPlanner(Node):
         
         # ROS 2 Node Parameters
         self.declare_parameter('input_topic', '/camera/sidewalk_mask')
-        # target_gray configuration:
-        # If target_gray is 255 or 0, we process it as a binary image (foreground > 127).
-        # If a label is supplied (e.g. 1 or 15), we filter strictly for that exact mask label value.
         self.declare_parameter('target_gray', 255)
         self.declare_parameter('resize_width', 960)
         self.declare_parameter('resize_height', 720)
@@ -405,35 +482,38 @@ class VoronoiPathPlanner(Node):
         self.resize_width = self.get_parameter('resize_width').get_parameter_value().integer_value
         self.resize_height = self.get_parameter('resize_height').get_parameter_value().integer_value
         
-        # State tracking to provide straight path temporal consistency
-        self.prev_best_path_coords = None  # Tracks: ((x0, y0), (x1, y1))
+        # State tracking
+        self.prev_best_path_coords = None  
         
         # Publishers
         self.debug_img_pub = self.create_publisher(Image, '/voronoi/debug_image', 10)
         self.angle_pub = self.create_publisher(Float32, '/voronoi/best_angle', 10)
         self.area_diff_pub = self.create_publisher(Float32, '/voronoi/area_difference', 10)
         self.best_path_pub = self.create_publisher(PoseArray, '/voronoi/best_path', 10)
-        
-        # --- ADDED: Publishers for individual side-vector areas ---
         self.area_left_pub = self.create_publisher(Float32, '/voronoi/area_left', 10)
         self.area_right_pub = self.create_publisher(Float32, '/voronoi/area_right', 10)
         
-        # Subscriber (Natively decodes image arrays to bypass cv_bridge Python/NumPy ABI mismatches) [2]
+        # Subscriber (Latest-only QoS pattern to completely avoid latency backlogs)
+        qos_profile = QoSProfile(
+            reliability=ReliabilityPolicy.BEST_EFFORT,
+            history=HistoryPolicy.KEEP_LAST,
+            depth=1
+        )
         self.mask_sub = self.create_subscription(
             Image,
             self.input_topic,
             self.mask_callback,
-            10
+            qos_profile
         )
         
         self.get_logger().info(
-            f"Voronoi Path Planner initialized. Subscribed to '{self.input_topic}' "
-            f"(Target Filter Label: {self.target_gray})."
+            f"Optimized Voronoi Planner initialized.\n"
+            f"Processing: {self.resize_width}x{self.resize_height} | Display: {self.resize_width}x{self.resize_height}"
         )
 
     def mask_callback(self, msg: Image):
         try:
-            # 1. Decode raw image message natively [2]
+            # 1. Decode raw image message natively
             if msg.encoding in ['mono8', '8UC1']:
                 clean_mask = np.frombuffer(msg.data, dtype=np.uint8).reshape((msg.height, msg.width))
             elif msg.encoding in ['rgb8', 'bgr8']:
@@ -443,9 +523,9 @@ class VoronoiPathPlanner(Node):
                 self.get_logger().error(f"Unsupported image encoding received: {msg.encoding}")
                 return
 
-            # 2. Rescale image to targeted standard dimensions
-            target_size = (self.resize_width, self.resize_height)
-            clean_mask = cv2.resize(clean_mask, target_size)
+            # 2. Rescale image to targeted standard dimensions (Optimized back to 960x720)
+            w, h = self.resize_width, self.resize_height
+            clean_mask = cv2.resize(clean_mask, (w, h))
 
             # 3. Apply Thresholding / Label Extraction logic
             if self.target_gray == 255 or self.target_gray <= 0:
@@ -453,22 +533,20 @@ class VoronoiPathPlanner(Node):
             else:
                 binary_mask = cv2.inRange(clean_mask, self.target_gray, self.target_gray)
 
-            if np.count_nonzero(binary_mask) == 0:
-                self.get_logger().warning("No path pixels matching target label detected.", throttle_duration_sec=4.0)
-                return
+            # if np.count_nonzero(binary_mask) == 0:
+            #     self.publish_empty_pose_array(msg.header)
+            #     self.publish_blank_debug_image(msg.header) # <-- Added safety display trigger
+            #     return
 
-            # 4. Extract external contours for boundaries
+             # 4. Extract external contours for boundaries
             contours, _ = cv2.findContours(binary_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
             if not contours:
                 return
+
+                
             contour = max(contours, key=cv2.contourArea)
             boundary_points = contour.squeeze()
 
-            if boundary_points.ndim < 2 or len(boundary_points) < 4:
-                return
-
-            # Map image boundary coords to Cartesian space by flipping Y vertical layout
-            h, w = binary_mask.shape[:2]
             boundary_points_cartesian = boundary_points.copy()
             boundary_points_cartesian[:, 1] = h - boundary_points_cartesian[:, 1]
 
@@ -483,32 +561,36 @@ class VoronoiPathPlanner(Node):
             # Build polygon using a buffered boundary shape
             polygon = Polygon(boundary_points_cartesian).buffer(0)
 
-            # Compute Voronoi Structure
+            # Compute Voronoi Structure on the 960x720 scaled points
             vor = Voronoi(boundary_points_ordered)
 
-            # Process Voronoi finite skeletal vectors
-            skeleton_lines, dict_ridge_points = get_skeleton_lines(vor, polygon)
-            if not skeleton_lines:
-                return
+            # Process Voronoi finite skeletal vectors using fast Point-in-Polygon checks
+            skeleton_lines, dict_ridge_points = get_skeleton_lines(vor, boundary_points_ordered)
+            # if not skeleton_lines:
+            #     self.publish_empty_pose_array(msg.header)
+            #     self.publish_blank_debug_image(msg.header) # <-- Added safety display trigger
+            #     return
 
             # Compute target planning vectors
             paths, best_angle, area_percentage_diff, best_path, side_vectors, area_left, area_right = interpreting_skeletons(
                 skeleton_lines, dict_ridge_points, vor, self.prev_best_path_coords
             )
 
-
-            # Retain coordinate state track history
-            if best_path is not None:
-                p0_cart = vor.vertices[best_path[0]]
-                p1_cart = vor.vertices[best_path[1]]
-                self.prev_best_path_coords = (p0_cart, p1_cart)
+            # # Retain coordinate state track history (in unscaled 960x720 space)
+            # if best_path is not None:
+            #     p0_cart = vor.vertices[best_path[0]]
+            #     p1_cart = vor.vertices[best_path[1]]
+            #     self.prev_best_path_coords = (p0_cart, p1_cart)
                 
-                # Publish physical coordinates
-                self.publish_best_path_pose_array(msg.header, p0_cart, p1_cart)
-            else:
-                self.prev_best_path_coords = None
+            #     # Publish physical coordinates directly (no scaling back needed)
+            #     self.publish_best_path_pose_array(msg.header, p0_cart, p1_cart)
+            # else:
+            #     self.prev_best_path_coords = None
+            #     self.publish_empty_pose_array(msg.header)
+            #     self.publish_blank_debug_image(msg.header) # <-- Added safety display trigger
+            #     return
 
-            # 5. Publish Steering Control Parameters
+            # # 5. Publish Steering Control Parameters
             angle_msg = Float32()
             angle_msg.data = float(best_angle)
             self.angle_pub.publish(angle_msg)
@@ -517,19 +599,20 @@ class VoronoiPathPlanner(Node):
             area_msg.data = float(area_percentage_diff)
             self.area_diff_pub.publish(area_msg)
 
-            # --- ADDED: Publish raw left and right areas ---
+            # Publish individual areas directly (no scale multipliers needed)
             area_left_msg = Float32()
             area_left_msg.data = float(area_left)
             self.area_left_pub.publish(area_left_msg)
-
+            
             area_right_msg = Float32()
             area_right_msg.data = float(area_right)
             self.area_right_pub.publish(area_right_msg)
 
-
-            # 6. Build and publish visual debug mapping
+            # 6. Build and publish visual debug mapping (scaled to 0.5x of the target resize dimensions)
+            dbg_w = int(self.resize_width * 0.5)
+            dbg_h = int(self.resize_height * 0.5)
             debug_bgr = self.generate_debug_image(
-                (h, w), boundary_points_ordered, skeleton_lines, paths, side_vectors, best_path, vor
+                (dbg_h, dbg_w), boundary_points_ordered, skeleton_lines, paths, side_vectors, best_path, vor
             )
             self.publish_debug_image(msg.header, debug_bgr)
 
@@ -537,61 +620,85 @@ class VoronoiPathPlanner(Node):
             self.get_logger().error(f"Voronoi pipeline error: {str(e)}")
 
     def generate_debug_image(self, shape, boundary_points, skeleton, paths, side_vectors, best_path, vor):
-        h, w = shape
+        h, w = shape  # Debug canvas dimensions (e.g. 360, 480)
         canvas = np.zeros((h, w, 3), dtype=np.uint8)
+
+        # Scale coordinates from 960x720 processing space to target debug display space
+        scale_x = w / float(self.resize_width)  # 480 / 960 = 0.5
+        scale_y = h / float(self.resize_height) # 360 / 720 = 0.5
 
         # Helper to convert Cartesian coordinate from vor.vertices back to standard Image space
         def to_img_space(pt):
-            return int(pt[0]), int(h - pt[1])
+            return int(pt[0] * scale_x), int(h - (pt[1] * scale_y))
+
+        # Dynamically scale visual elements (0.5 scale factor for 0.5x display)
+        line_thick = max(1, int(2 * 0.5))      
+        best_line_thick = max(1, int(4 * 0.5)) 
+        circle_rad = max(2, int(6 * 0.5))      
 
         # Draw outer boundary contour fill
         boundary_pts_img = np.array([to_img_space(p) for p in boundary_points], dtype=np.int32)
-        cv2.polylines(canvas, [boundary_pts_img], isClosed=True, color=(120, 120, 120), thickness=2)
+        cv2.polylines(canvas, [boundary_pts_img], isClosed=True, color=(120, 120, 120), thickness=line_thick)
         cv2.fillPoly(canvas, [boundary_pts_img], color=(30, 30, 30))
 
         # 1. Draw raw skeleton lines (Cyan/Blue)
         for v0, v1 in skeleton:
             p0 = to_img_space(vor.vertices[v0])
             p1 = to_img_space(vor.vertices[v1])
-            cv2.line(canvas, p0, p1, (255, 100, 0), 1)
+            cv2.line(canvas, p0, p1, (255, 100, 0), line_thick)
 
         # 2. Draw side vector elements (Red)
         for v0, v1 in side_vectors:
             p0 = to_img_space(vor.vertices[v0])
             p1 = to_img_space(vor.vertices[v1])
-            cv2.line(canvas, p0, p1, (0, 0, 255), 2)
+            cv2.line(canvas, p0, p1, (0, 0, 255), line_thick)
 
         # 3. Draw parsed candidate pathways (Green)
         for v0, v1 in paths:
             p0 = to_img_space(vor.vertices[v0])
             p1 = to_img_space(vor.vertices[v1])
-            cv2.line(canvas, p0, p1, (0, 255, 0), 2)
+            cv2.line(canvas, p0, p1, (0, 255, 0), line_thick)
 
         # 4. Draw targeted path selection (Yellow/Orange)
         if best_path is not None:
             p0 = to_img_space(vor.vertices[best_path[0]])
             p1 = to_img_space(vor.vertices[best_path[1]])
-            cv2.line(canvas, p0, p1, (0, 255, 255), 4)
-            cv2.circle(canvas, p0, 6, (0, 165, 255), -1)
-            cv2.circle(canvas, p1, 6, (0, 165, 255), -1)
+            cv2.line(canvas, p0, p1, (0, 255, 255), best_line_thick)
+            cv2.circle(canvas, p0, circle_rad, (0, 165, 255), -1)
+            cv2.circle(canvas, p1, circle_rad, (0, 165, 255), -1)
 
         return canvas
 
     def publish_debug_image(self, header, debug_bgr):
-        # 1. Convert standard OpenCV BGR array to RGB for Gazebo compatibility
         debug_rgb = cv2.cvtColor(debug_bgr, cv2.COLOR_BGR2RGB)
         
-        # 2. Build the ROS 2 Image message natively with 'rgb8' encoding
         debug_msg = Image()
         debug_msg.header = header
         debug_msg.height = debug_rgb.shape[0]
         debug_msg.width = debug_rgb.shape[1]
-        debug_msg.encoding = 'rgb8'  # Upgraded to standard RGB
+        debug_msg.encoding = 'rgb8'
         debug_msg.is_bigendian = 0
         debug_msg.step = debug_rgb.shape[1] * 3
         debug_msg.data = debug_rgb.tobytes()
         
         self.debug_img_pub.publish(debug_msg)
+
+    def publish_blank_debug_image(self, header):
+        """Draws a 'NO PATH DETECTED' warning canvas to keep the display active on startup."""
+        dbg_w = int(self.resize_width * 0.5)
+        dbg_h = int(self.resize_height * 0.5)
+        canvas = np.zeros((dbg_h, dbg_w, 3), dtype=np.uint8)
+        
+        cv2.putText(
+            canvas, 
+            "NO PATH DETECTED", 
+            (int(dbg_w * 0.15), int(dbg_h * 0.5)),
+            cv2.FONT_HERSHEY_SIMPLEX, 
+            0.7, 
+            (0, 0, 255), 
+            2
+        )
+        self.publish_debug_image(header, canvas)
 
     def publish_best_path_pose_array(self, header, p0_cart, p1_cart):
         pose_array = PoseArray()
@@ -603,11 +710,17 @@ class VoronoiPathPlanner(Node):
         pose0.position.z = 0.0
 
         pose1 = Pose()
-        pose1.position.x = float(p1_cart[0])
+        pose1.position.x = float(p1_cart[0]) # <-- Fixed typo from p0_cart
         pose1.position.y = float(p1_cart[1])
         pose1.position.z = 0.0
 
         pose_array.poses = [pose0, pose1]
+        self.best_path_pub.publish(pose_array)
+
+    def publish_empty_pose_array(self, header):
+        pose_array = PoseArray()
+        pose_array.header = header
+        pose_array.poses = []
         self.best_path_pub.publish(pose_array)
 
 
@@ -621,7 +734,6 @@ def main(args=None):
     finally:
         node.destroy_node()
         rclpy.shutdown()
-
 
 if __name__ == '__main__':
     main()
