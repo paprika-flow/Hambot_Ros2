@@ -9,11 +9,11 @@ from launch_ros.actions import Node
 import xacro
 
 
-def parse_spawn_points(world_path):
+def parse_waypoints(world_path):
     """
-    Read <frame> elements from SDF world file.
-    Extract name=start_position_N → x, y, z, yaw.
-    Return list of dicts sorted by N.
+    Read all <frame> elements from SDF world file.
+    Returns list of dicts: {'label': 'name', 'x': x, 'y': y, 'z': z, 'yaw': yaw}.
+    Sorted by label.
     """
     if not os.path.exists(world_path):
         return []
@@ -21,39 +21,50 @@ def parse_spawn_points(world_path):
     with open(world_path) as f:
         content = f.read()
 
-    # Match: <frame name="start_position_(\d+)">\n  <pose>X Y Z R P Y</pose>
+    # Match: <frame name="ANYTHING">\n  <pose>X Y Z R P Y</pose>
     pattern = (
-        r'<frame\s+name="start_position_(\d+)"[^>]*>\s*'
+        r'<frame\s+name="([^"]+)"[^>]*>\s*'
         r'<pose>([\d.-]+)\s+([\d.-]+)\s+([\d.-]+)\s+[\d.-]+\s+[\d.-]+\s+([\d.-]+)</pose>'
     )
     matches = re.findall(pattern, content)
 
     points = []
-    for num_str, x_str, y_str, z_str, yaw_str in matches:
+    for label, x_str, y_str, z_str, yaw_str in matches:
         points.append({
-            'id': int(num_str),
+            'label': label,
             'x': float(x_str),
             'y': float(y_str),
             'z': float(z_str),
             'yaw': float(yaw_str),
         })
 
-    points.sort(key=lambda p: p['id'])
+    points.sort(key=lambda p: p['label'])
     return points
 
 
 def spawn_robot_action(context):
-    """Create spawn robot node using the selected start point parsed from SDF."""
+    """Create spawn robot node — spawn_point=label, optional rotation=override_yaw."""
     pkg_bringup = get_package_share_directory('hambot_bringup')
     world_file = os.path.join(pkg_bringup, 'worlds', 'campus_map.sdf')
-    points = parse_spawn_points(world_file)
+    points = parse_waypoints(world_file)
     num_points = len(points)
 
-    point_str = LaunchConfiguration('start_point').perform(context)
-    idx = int(point_str) if point_str.isdigit() else 1
-    idx = max(1, min(idx, num_points))  # clamp to valid range
+    label_arg = LaunchConfiguration('spawn_point').perform(context).strip()
+    rotation_arg = LaunchConfiguration('rotation').perform(context).strip()
 
-    pose = points[idx - 1]  # 1-indexed arg → 0-indexed list
+    # Find matching waypoint
+    pose = next((p for p in points if p['label'] == label_arg), None)
+    if pose is None and num_points > 0:
+        pose = points[0]
+    elif pose is None:
+        return []
+
+    x = str(pose['x'])
+    y = str(pose['y'])
+    z = str(pose['z'])
+    yaw = str(pose['yaw'])
+    if rotation_arg:
+        yaw = rotation_arg
 
     return [
         Node(
@@ -62,10 +73,10 @@ def spawn_robot_action(context):
             arguments=[
                 '-name', 'hambot',
                 '-topic', 'robot_description',
-                '-x', str(pose['x']),
-                '-y', str(pose['y']),
-                '-z', str(pose['z']),
-                '-Y', str(pose['yaw']),
+                '-x', x,
+                '-y', y,
+                '-z', z,
+                '-Y', yaw,
             ],
             output='screen',
         )
@@ -77,19 +88,29 @@ def generate_launch_description():
     pkg_bringup = get_package_share_directory('hambot_bringup')
     pkg_ros_gz_sim = get_package_share_directory('ros_gz_sim')
 
-    # --- Count available spawn points for help text ---
+    # --- Count available waypoints for help text ---
     world_file = os.path.join(pkg_bringup, 'worlds', 'campus_map.sdf')
-    num_points = len(parse_spawn_points(world_file))
+    points = parse_waypoints(world_file)
+    num_points = len(points)
+    label_list = ', '.join(p['label'] for p in points[:6])
+    if len(points) > 6:
+        label_list += ', ...'
+    first_label = points[0]['label'] if points else 'none'
 
     # --- Launch args ---
-    start_point_arg = DeclareLaunchArgument(
-        'start_point',
-        default_value='1',
+    spawnpoint_arg = DeclareLaunchArgument(
+        'spawnpoint',
+        default_value=first_label,
         description=(
-            f'Spawn point index (1-{num_points}). '
-            f'Parsed automatically from <frame name="start_position_N"> '
-            f'in campus_map.sdf. Default=1.'
+            f'Waypoint label to spawn at. '
+            f'Available: {label_list}. '
+            f'Default: {first_label}.'
         )
+    )
+    rotation_arg = DeclareLaunchArgument(
+        'rotation',
+        default_value='',
+        description='Optional: override yaw (radians). If empty, use waypoint default.'
     )
 
     # --- Robot model ---
@@ -174,7 +195,8 @@ def generate_launch_description():
     )
 
     return LaunchDescription([
-        start_point_arg,
+        spawnpoint_arg,
+        rotation_arg,
         robot_state_publisher,
         gazebo_sim,
         spawn_robot,

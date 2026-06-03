@@ -76,7 +76,7 @@ class SidewalkMapGenerator:
         # Each segment:
         # - Sidewalk:    {'type': 'sidewalk', 'x': x, 'y': y, 'length': l, 'yaw': yaw, 'width': w, 'height': h}
         # - Grass:       {'type': 'grass', 'x1': x1, 'y1': y1, 'x2': x2, 'y2': y2}
-        # - Spawn Point: {'type': 'spawn_point', 'x': x, 'y': y, 'yaw': yaw, 'id': id}
+        # - Waypoint:    {'type': 'waypoint', 'x': x, 'y': y, 'yaw': yaw, 'label': 'name'}
         self.segments = []
         self.selected_idx = -1  # Index of active selection (-1 = none)
 
@@ -85,7 +85,7 @@ class SidewalkMapGenerator:
         self.center_x = 450.0
         self.center_y = 375.0
 
-        self.drag_mode = None  # "draw", "move", "resize_length", "resize_width", "move_grass", "resize_grass_corner", "pan", "move_spawn", "rotate_spawn"
+        self.drag_mode = None  # "draw", "move", "resize_length", "resize_width", "move_grass", "resize_grass_corner", "pan", "move_waypoint", "rotate_waypoint"
         self.has_dragged = False
         self.space_held = False
         self.press_cx = 0
@@ -198,7 +198,7 @@ class SidewalkMapGenerator:
             tool_frame, text="Grass Area", variable=self.tool_var, value="grass"
         ).pack(anchor=tk.W, pady=2)
         ttk.Radiobutton(
-            tool_frame, text="Spawn Point", variable=self.tool_var, value="spawn_point"
+            tool_frame, text="Waypoint", variable=self.tool_var, value="waypoint"
         ).pack(anchor=tk.W, pady=2)
 
         self.snap_var = tk.BooleanVar(value=True)
@@ -269,6 +269,9 @@ class SidewalkMapGenerator:
         self.lbl_height = ttk.Label(self.edit_content, text="Segment Height/Lift (m):")
         self.precise_height = ttk.Entry(self.edit_content)
 
+        self.label_lbl = ttk.Label(self.edit_content, text="Waypoint Label:")
+        self.label_entry = ttk.Entry(self.edit_content)
+
         self.btn_add_new = ttk.Button(
             self.edit_content,
             text="Add as New Segment",
@@ -305,7 +308,7 @@ class SidewalkMapGenerator:
             "- Drag Blue Square: Length & yaw.\n"
             "- Drag Pink Square: Width.\n"
             "- Drag Cyan Square: Grass corners.\n"
-            "- Drag Spawn Point: Move & rotate.\n"
+            "- Drag Waypoint: Move & rotate.\n"
             "- Red Axis: X direction.\n"
             "- Green Axis: Y direction."
         )
@@ -391,6 +394,8 @@ class SidewalkMapGenerator:
         self.precise_width.pack_forget()
         self.lbl_height.pack_forget()
         self.precise_height.pack_forget()
+        self.label_lbl.pack_forget()
+        self.label_entry.pack_forget()
 
         self.btn_add_new.pack_forget()
         self.btn_update.pack_forget()
@@ -434,7 +439,7 @@ class SidewalkMapGenerator:
             self.precise_len.pack(fill=tk.X, pady=(0, 5))
             self.lbl_ang.pack(anchor=tk.W)
             self.precise_ang.pack(fill=tk.X, pady=(0, 10))
-        elif seg_type == "spawn_point":
+        elif seg_type == "waypoint":
             self.lbl_x.config(text="Spawn X (m):")
             self.lbl_y.config(text="Spawn Y (m):")
             self.lbl_ang.config(text="Yaw Angle (deg):")
@@ -444,7 +449,9 @@ class SidewalkMapGenerator:
             self.lbl_y.pack(anchor=tk.W)
             self.precise_y.pack(fill=tk.X, pady=(0, 5))
             self.lbl_ang.pack(anchor=tk.W)
-            self.precise_ang.pack(fill=tk.X, pady=(0, 10))
+            self.precise_ang.pack(fill=tk.X, pady=(0, 5))
+            self.label_lbl.pack(anchor=tk.W)
+            self.label_entry.pack(fill=tk.X, pady=(0, 10))
 
         self.btn_add_new.pack(fill=tk.X, pady=(5, 3))
         self.btn_update.pack(fill=tk.X, pady=3)
@@ -461,7 +468,7 @@ class SidewalkMapGenerator:
             self.set_entry_val(self.precise_x, seg["x"])
             self.set_entry_val(self.precise_y, seg["y"])
             self.set_entry_val(self.precise_len, seg["length"])
-            self.set_entry_val(self.precise_ang, math.degrees(seg["yaw"]))
+            self.set_entry_val(self.precise_ang, math.degrees(seg['yaw']))
             self.set_entry_val(self.precise_width, seg["width"])
             self.set_entry_val(self.precise_height, seg.get("height", 0.05))
         elif seg_type == "grass":
@@ -469,10 +476,12 @@ class SidewalkMapGenerator:
             self.set_entry_val(self.precise_y, seg["y1"])
             self.set_entry_val(self.precise_len, seg["x2"])
             self.set_entry_val(self.precise_ang, seg["y2"])
-        elif seg_type == "spawn_point":
+        elif seg_type == "waypoint":
             self.set_entry_val(self.precise_x, seg["x"])
             self.set_entry_val(self.precise_y, seg["y"])
-            self.set_entry_val(self.precise_ang, math.degrees(seg["yaw"]))
+            self.set_entry_val(self.precise_ang, math.degrees(seg['yaw']))
+            self.label_entry.delete(0, tk.END)
+            self.label_entry.insert(0, seg.get('label', 'unnamed'))
 
     def update_button_states(self):
         if self.selected_idx != -1:
@@ -488,13 +497,9 @@ class SidewalkMapGenerator:
             self.btn_deselect.config(state=tk.DISABLED)
             self.sel_status_label.config(text="No segment selected", foreground="gray")
 
-    def reindex_spawn_points(self):
-        """Maintains consecutive start position labeling after deletions"""
-        count = 1
-        for seg in self.segments:
-            if seg.get("type") == "spawn_point":
-                seg["id"] = count
-                count += 1
+    def reindex_waypoints(self):
+        """No-op: labels are set once by user, never auto-renamed."""
+        pass
 
     # --------------------------------------------------
     # Frame & Scale Conversions
@@ -628,7 +633,7 @@ class SidewalkMapGenerator:
                         min_dist = dist
                         closest_idx = idx
 
-            elif seg_type == "spawn_point":
+            elif seg_type == "waypoint":
                 # Direct circular proximity check (40cm range)
                 dist = math.sqrt((wx - seg["x"]) ** 2 + (wy - seg["y"]) ** 2)
                 if dist <= 0.4:
@@ -722,7 +727,7 @@ class SidewalkMapGenerator:
                         self.drag_offset_y2 = wy - y2
                         return
 
-                elif seg_type == "spawn_point":
+                elif seg_type == "waypoint":
                     # Rotate handle
                     x_sp, y_sp = seg["x"], seg["y"]
                     yaw = seg["yaw"]
@@ -732,11 +737,11 @@ class SidewalkMapGenerator:
                     dist_rot = math.sqrt((event.x - ax) ** 2 + (event.y - ay) ** 2)
 
                     if dist_rot <= 10:
-                        self.drag_mode = "rotate_spawn"
+                        self.drag_mode = "rotate_waypoint"
                         return
 
                     if self.find_clicked_segment(wx, wy) == self.selected_idx:
-                        self.drag_mode = "move_spawn"
+                        self.drag_mode = "move_waypoint"
                         self.drag_offset_x = wx - x_sp
                         self.drag_offset_y = wy - y_sp
                         return
@@ -758,8 +763,8 @@ class SidewalkMapGenerator:
                 self.drag_offset_y1 = wy - seg["y1"]
                 self.drag_offset_x2 = wx - seg["x2"]
                 self.drag_offset_y2 = seg["y2"]
-            elif seg_type == "spawn_point":
-                self.drag_mode = "move_spawn"
+            elif seg_type == "waypoint":
+                self.drag_mode = "move_waypoint"
                 self.drag_offset_x = wx - seg["x"]
                 self.drag_offset_y = wy - seg["y"]
 
@@ -770,15 +775,16 @@ class SidewalkMapGenerator:
             return
 
         # 3. Handle Spawning Point creation on single click
-        if active_tool == "spawn_point":
+        if active_tool == "waypoint":
             if self.snap_var.get():
                 wx, wy, yaw = self.snap_to_sidewalk(wx, wy)
             else:
                 yaw = 0.0
 
-            count = len([s for s in self.segments if s.get("type") == "spawn_point"])
+            count = len([s for s in self.segments if s.get("type") == "waypoint"])
+            label = f"waypoint_{count + 1}"
             self.segments.append(
-                {"type": "spawn_point", "x": wx, "y": wy, "yaw": yaw, "id": count + 1}
+                {"type": "waypoint", "x": wx, "y": wy, "yaw": yaw, "label": label}
             )
             self.selected_idx = len(self.segments) - 1
             self.load_segment_to_entries(self.segments[-1])
@@ -892,7 +898,7 @@ class SidewalkMapGenerator:
             self.redraw()
 
         # --- MODE: TRANSLATE SPAWN POINT ---
-        elif self.drag_mode == "move_spawn":
+        elif self.drag_mode == "move_waypoint":
             seg = self.segments[self.selected_idx]
             new_x = curr_wx - self.drag_offset_x
             new_y = curr_wy - self.drag_offset_y
@@ -949,7 +955,7 @@ class SidewalkMapGenerator:
             self.redraw()
 
         # --- MODE: ROTATE SPAWN POINT ---
-        elif self.drag_mode == "rotate_spawn":
+        elif self.drag_mode == "rotate_waypoint":
             seg = self.segments[self.selected_idx]
             dx = curr_wx - seg["x"]
             dy = curr_wy - seg["y"]
@@ -1074,18 +1080,16 @@ class SidewalkMapGenerator:
                 self.segments.append(
                     {"type": "grass", "x1": x1, "y1": y1, "x2": x2, "y2": y2}
                 )
-            elif mode == "spawn_point":
+            elif mode == "waypoint":
                 yaw_deg = float(self.precise_ang.get())
-                count = len(
-                    [s for s in self.segments if s.get("type") == "spawn_point"]
-                )
+                label = self.label_entry.get().strip() or f"waypoint_{len([s for s in self.segments if s.get('type') == 'waypoint']) + 1}"
                 self.segments.append(
                     {
-                        "type": "spawn_point",
+                        "type": "waypoint",
                         "x": x1,
                         "y": y1,
                         "yaw": math.radians(yaw_deg),
-                        "id": count + 1,
+                        "label": label,
                     }
                 )
 
@@ -1134,11 +1138,12 @@ class SidewalkMapGenerator:
                     "x2": x2,
                     "y2": y2,
                 }
-            elif seg_type == "spawn_point":
+            elif seg_type == "waypoint":
                 yaw_deg = float(self.precise_ang.get())
                 seg["x"] = x1
                 seg["y"] = y1
                 seg["yaw"] = math.radians(yaw_deg)
+                seg["label"] = self.label_entry.get().strip() or seg.get("label", "unnamed")
 
             self.redraw()
         except ValueError:
@@ -1151,7 +1156,7 @@ class SidewalkMapGenerator:
             return
         self.segments.pop(self.selected_idx)
         self.selected_idx = -1
-        self.reindex_spawn_points()
+        self.reindex_waypoints()
         self.update_button_states()
         self.update_editor_labels()
         self.redraw()
@@ -1167,12 +1172,12 @@ class SidewalkMapGenerator:
     # --------------------------------------------------
     def redraw(self):
         # Only delete dynamic layers, keep cached grid
-        self.canvas.delete("grass", "sidewalk", "spawn_point", "overlay", "preview")
+        self.canvas.delete("grass", "sidewalk", "waypoint", "overlay", "preview")
 
         self.draw_grid()  # Layer 1 (cached)
         self.draw_grass_patches()  # Layer 2
         self.draw_sidewalks()  # Layer 3
-        self.draw_spawn_points()  # Layer 3.5
+        self.draw_waypoints()  # Layer 3.5
         self.draw_active_handles()  # Layer 4
 
     def draw_grid(self):
@@ -1314,14 +1319,14 @@ class SidewalkMapGenerator:
                 tags="sidewalk",
             )
 
-    def draw_spawn_points(self):
+    def draw_waypoints(self):
         """Layer 3.5: Robot Spawn points drawn on top of the sidewalk path"""
         for idx, seg in enumerate(self.segments):
-            if seg.get("type") != "spawn_point":
+            if seg.get("type") != "waypoint":
                 continue
             x, y = seg["x"], seg["y"]
             yaw = seg["yaw"]
-            sp_id = seg["id"]
+            label_text = seg.get("label", "?")
 
             cx, cy = self.to_canvas(x, y)
 
@@ -1334,7 +1339,7 @@ class SidewalkMapGenerator:
                     cy + 14,
                     outline="#ffd700",
                     width=3,
-                    tags="spawn_point",
+                    tags="waypoint",
                 )
 
             # Draw primary Spawn icon (Cyan circle)
@@ -1346,7 +1351,7 @@ class SidewalkMapGenerator:
                 fill="#00ffff",
                 outline="white",
                 width=2,
-                tags="spawn_point",
+                tags="waypoint",
             )
 
             # Heading reference arrow
@@ -1361,17 +1366,17 @@ class SidewalkMapGenerator:
                 fill="#ff1493",
                 width=2,
                 arrow=tk.LAST,
-                tags="spawn_point",
+                tags="waypoint",
             )
 
-            # Inner ID label text
+            # Label text displayed near waypoint
             self.canvas.create_text(
                 cx,
-                cy,
-                text=str(sp_id),
-                fill="black",
-                font=("Arial", 9, "bold"),
-                tags="spawn_point",
+                cy - 16,
+                text=label_text,
+                fill="white",
+                font=("Arial", 8, "bold"),
+                tags="waypoint",
             )
 
     def draw_active_handles(self):
@@ -1470,7 +1475,7 @@ class SidewalkMapGenerator:
                         tags="overlay",
                     )
 
-            elif seg_type == "spawn_point":
+            elif seg_type == "waypoint":
                 if idx == self.selected_idx:
                     x, y, yaw = seg["x"], seg["y"], seg["yaw"]
                     cx, cy = self.to_canvas(x, y)
@@ -1493,7 +1498,7 @@ class SidewalkMapGenerator:
         if self.segments:
             self.segments.pop()
             self.selected_idx = -1
-            self.reindex_spawn_points()
+            self.reindex_waypoints()
             self.update_button_states()
             self.update_editor_labels()
             self.redraw()
@@ -1610,34 +1615,27 @@ class SidewalkMapGenerator:
                     {"type": "grass", "x1": x1, "y1": y1, "x2": x2, "y2": y2}
                 )
 
-        # Parse pre-defined Robot Spawn points from SDF <frame> tags [3]
-        frames = root.findall(".//frame")
+        # Parse Waypoints from <frame> elements directly under <world>
+        world_elem = root.find("world")
+        frames = world_elem.findall("frame") if world_elem is not None else []
         for frame in frames:
             name = frame.get("name")
-            if name and name.startswith("start_position_"):
-                try:
-                    sp_id = int(name.split("_")[-1])
-                except ValueError:
-                    sp_id = (
-                        len(
-                            [s for s in imported_segments if s["type"] == "spawn_point"]
-                        )
-                        + 1
-                    )
+            if not name:
+                continue
 
-                pose_elem = frame.find("pose")
-                if pose_elem is None or not pose_elem.text:
-                    continue
-                pose_parts = pose_elem.text.strip().split()
-                if len(pose_parts) < 6:
-                    continue
-                x = float(pose_parts[0])
-                y = float(pose_parts[1])
-                yaw = float(pose_parts[5])
+            pose_elem = frame.find("pose")
+            if pose_elem is None or not pose_elem.text:
+                continue
+            pose_parts = pose_elem.text.strip().split()
+            if len(pose_parts) < 6:
+                continue
+            x = float(pose_parts[0])
+            y = float(pose_parts[1])
+            yaw = float(pose_parts[5])
 
-                imported_segments.append(
-                    {"type": "spawn_point", "x": x, "y": y, "yaw": yaw, "id": sp_id}
-                )
+            imported_segments.append(
+                {"type": "waypoint", "x": x, "y": y, "yaw": yaw, "label": name}
+            )
 
         if not imported_segments:
             messagebox.showwarning(
@@ -1649,17 +1647,17 @@ class SidewalkMapGenerator:
         # Replace active segments with imported collection
         self.segments = imported_segments
         self.selected_idx = -1
-        self.reindex_spawn_points()
+        self.reindex_waypoints()
         self.update_button_states()
         self.update_editor_labels()
         self.redraw()
 
         num_sidewalks = sum(1 for s in self.segments if s["type"] == "sidewalk")
         num_grass = sum(1 for s in self.segments if s["type"] == "grass")
-        num_spawns = sum(1 for s in self.segments if s["type"] == "spawn_point")
+        num_spawns = sum(1 for s in self.segments if s["type"] == "waypoint")
         messagebox.showinfo(
             "Import Complete",
-            f"Successfully imported:\n- {num_sidewalks} Sidewalk(s)\n- {num_grass} Grass Patch(es)\n- {num_spawns} Spawn Point(s)",
+            f"Successfully imported:\n- {num_sidewalks} Sidewalk(s)\n- {num_grass} Grass Patch(es)\n- {num_spawns} Waypoint(s)",
         )
 
     # --------------------------------------------------
@@ -1688,7 +1686,7 @@ class SidewalkMapGenerator:
         sidewalks = [
             s for s in self.segments if s.get("type", "sidewalk") == "sidewalk"
         ]
-        spawn_points = [s for s in self.segments if s.get("type") == "spawn_point"]
+        waypoints = [s for s in self.segments if s.get("type") == "waypoint"]
 
         # 1. GENERATE GRASS LAYOUTS
         if not grass_patches:
@@ -1822,18 +1820,17 @@ class SidewalkMapGenerator:
 
         # 3. GENERATE PREDEFINED SPAWN POINTS
         spawn_xml_lines = []
-        for sp in spawn_points:
+        for sp in waypoints:
             x, y = sp["x"], sp["y"]
             yaw = sp["yaw"]
-            sp_id = sp["id"]
-            line = f"""
-    <!-- Predefined Spawn Point {sp_id} -->
-    <frame name="start_position_{sp_id}">
+            sp_label = sp.get("label", "unnamed")
+            line = f"""\n    <!-- Waypoint: {sp_label} -->
+    <frame name="{sp_label}">
       <pose>{x:.4f} {y:.4f} 0.1000 0.0000 0.0000 {yaw:.4f}</pose>
     </frame>"""
             spawn_xml_lines.append(line)
 
-        spawn_points_xml = "\n".join(spawn_xml_lines)
+        waypoints_xml = "\n".join(spawn_xml_lines)
 
         sdf_content = f"""<?xml version="1.0" ?>
 <sdf version="1.8">
@@ -1885,7 +1882,7 @@ class SidewalkMapGenerator:
 
     <!-- ========================================== -->
     <!-- 5. PREDEFINED SPAWN POINTS                 -->
-    <!-- ========================================== -->{spawn_points_xml}
+    <!-- ========================================== -->{waypoints_xml}
 
   </world>
 </sdf>
