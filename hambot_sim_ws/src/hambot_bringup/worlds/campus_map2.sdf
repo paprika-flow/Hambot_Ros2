@@ -290,13 +290,13 @@
       <link name="segment_9">
         <pose>22.0000 -9.0000 0.0 0 0 1.0517</pose>
         <collision name="col">
-          <pose>4.0311 0 0.0250 0 0 0</pose>
+          <pose>4.0312 0 0.0250 0 0 0</pose>
           <geometry>
             <box><size>8.0623 1.2000 0.0500</size></box>
           </geometry>
         </collision>
         <visual name="vis">
-          <pose>4.0311 0 0.0250 0 0 0</pose>
+          <pose>4.0312 0 0.0250 0 0 0</pose>
           <geometry>
             <box><size>8.0623 1.2000 0.0500</size></box>
           </geometry>
@@ -314,64 +314,79 @@
     <!-- ========================================== -->
     <!-- 5. PREDEFINED SPAWN POINTS                 -->
     <!-- ========================================== -->
-    <!-- Waypoint: waypoint_10 -->
-    <frame name="waypoint_10">
+    <!-- Waypoint: sp_1 -->
+    <frame name="sp_1">
       <pose>-0.0000 -8.0000 0.1000 0.0000 0.0000 1.5708</pose>
     </frame>
 
-    <!-- Waypoint: waypoint_11 -->
-    <frame name="waypoint_11">
+    <!-- Waypoint: wp_plaza_exit_1 -->
+    <frame name="wp_plaza_exit_1">
       <pose>13.0000 -8.0000 0.1000 0.0000 0.0000 1.5708</pose>
     </frame>
 
-    <!-- Waypoint: waypoint_12 -->
-    <frame name="waypoint_12">
+    <!-- Waypoint: wp_slant_split_1 -->
+    <frame name="wp_slant_split_1">
       <pose>-10.1000 6.8000 0.1000 0.0000 0.0000 2.2143</pose>
     </frame>
 
-    <!-- Waypoint: waypoint_13 -->
-    <frame name="waypoint_13">
+    <!-- Waypoint: wp_crossway_1 -->
+    <frame name="wp_crossway_1">
       <pose>0.0000 0.0000 0.1000 0.0000 0.0000 3.1416</pose>
     </frame>
 
-    <!-- Waypoint: waypoint_14 -->
-    <frame name="waypoint_14">
-      <pose>0.0000 7.0000 0.1000 0.0000 0.0000 3.1416</pose>
+    <!-- Waypoint: wp_crossway_2 -->
+    <frame name="wp_crossway_2">
+      <pose>-0.0000 7.0000 0.1000 0.0000 0.0000 3.1353</pose>
     </frame>
 
-    <!-- Waypoint: waypoint_15 -->
+    <!-- Waypoint: wp_crossway_1 -->
     <frame name="wp_crossway_1">
       <pose>12.9999 7.0000 0.1000 0.0000 0.0000 1.5708</pose>
     </frame>
 
-    <!-- Waypoint: waypoint_16 -->
-    <frame name="wp_crossway_2">
+    <!-- Waypoint: wp_crossway_4 -->
+    <frame name="wp_crossway_4">
       <pose>13.0000 -0.0000 0.1000 0.0000 0.0000 1.5708</pose>
     </frame>
 
-    <!-- Waypoint: waypoint_17 -->
-    <frame name="wp_crossway_3">
-      <pose>-10.8576 -7.6374 0.1000 0.0000 0.0000 1.5708</pose>
+    <!-- Waypoint: wp_end_1 -->
+    <frame name="wp_end_1">
+      <pose>-10.8576 -13.6374 0.1000 0.0000 0.0000 1.5708</pose>
     </frame>
 
-    <!-- Waypoint: waypoint_18 -->
-    <frame name="wp_crossway_4">
+    <!-- Waypoint: wp_y_split_1 -->
+    <frame name="wp_y_split_1">
       <pose>-5.0000 0.0000 0.1000 0.0000 0.0000 2.2143</pose>
     </frame>
 
-    <!-- Waypoint: waypoint_21 -->
-    <frame name="waypoint_21">
-      <pose>13.0800 -15.3600 0.1000 0.0000 0.0000 0.0000</pose>
+    <!-- Waypoint: sp_plaza -->
+    <frame name="sp_plaza">
+      <pose>13.0800 -15.3600 0.1000 0.0000 0.0000 1.0552</pose>
     </frame>
 
-    <!-- Waypoint: waypoint_22 -->
-    <frame name="sp_1">
-      <pose>22.4961 -8.1318 0.1000 0.0000 0.0000 1.0517</pose>
+    <!-- Waypoint: wp_plaza_exit_2 -->
+    <frame name="wp_plaza_exit_2">
+      <pose>22.5000 -8.1300 0.1000 0.0000 0.0000 1.0517</pose>
     </frame>
 
-    <!-- Waypoint: waypoint_23 -->
-    <frame name="waypoint_23">
-      <pose>0.0000 -8.0000 0.1000 0.0000 0.0000 1.5708</pose>
+    <!-- Waypoint: wp_crossway_3 -->
+    <frame name="wp_crossway_3">
+      <pose>13.0000 7.0000 0.1000 0.0000 0.0000 1.5708</pose>
+    </frame>
+
+    <!-- Waypoint: wp_end_2 -->
+    <frame name="wp_end_2">
+      <pose>-16.4000 15.2000 0.1000 0.0000 0.0000 2.2143</pose>
+    </frame>
+
+    <!-- Waypoint: wp_end_3 -->
+    <frame name="wp_end_3">
+      <pose>-0.0000 16.0000 0.1000 0.0000 0.0000 1.5708</pose>
+    </frame>
+
+    <!-- Waypoint: wp_end_4 -->
+    <frame name="wp_end_4">
+      <pose>13.0000 16.0000 0.1000 0.0000 0.0000 1.5708</pose>
     </frame>
 
   </world>
