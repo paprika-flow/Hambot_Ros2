@@ -339,11 +339,6 @@
       <pose>-0.0000 7.0000 0.1000 0.0000 0.0000 3.1353</pose>
     </frame>
 
-    <!-- Waypoint: wp_crossway_1 -->
-    <frame name="wp_crossway_1">
-      <pose>12.9999 7.0000 0.1000 0.0000 0.0000 1.5708</pose>
-    </frame>
-
     <!-- Waypoint: wp_crossway_4 -->
     <frame name="wp_crossway_4">
       <pose>13.0000 -0.0000 0.1000 0.0000 0.0000 1.5708</pose>
