@@ -184,6 +184,29 @@
     <origin xyz="${stand_joint_x} 0 ${chassis_hgt/2}" rpy="0 0 0"/>
   </joint>
 
+  <!-- IMU Frame (center of chassis) -->
+  <link name="imu_frame">
+    <inertial>
+      <mass value="0.01"/>
+      <inertia ixx="1e-6" ixy="0.0" ixz="0.0" iyy="1e-6" iyz="0.0" izz="1e-6"/>
+    </inertial>
+  </link>
+
+  <joint name="imu_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="imu_frame"/>
+    <origin xyz="0 0 ${chassis_hgt/2}" rpy="0 0 0"/>
+  </joint>
+
+  <gazebo reference="imu_frame">
+    <sensor name="imu_sensor" type="imu">
+      <topic>/imu/data</topic>
+      <update_rate>50</update_rate>
+      <always_on>1</always_on>
+      <visualize>true</visualize>
+    </sensor>
+  </gazebo>
+
   <!-- Camera Frame & Gazebo Sensor -->
   <link name="camera_frame">
     <visual>
