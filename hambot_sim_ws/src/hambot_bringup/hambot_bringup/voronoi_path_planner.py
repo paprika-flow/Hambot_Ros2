@@ -10,10 +10,9 @@ from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 import cv2
 import numpy as np
 import math
-import bisect
 from collections import defaultdict
 from scipy.spatial import Voronoi
-from shapely.geometry import Polygon, LineString
+from shapely.geometry import Polygon
 
 
 # =====================================================================
@@ -54,23 +53,43 @@ def is_point_in_polygon(pt, poly_pts):
 
 
 def find_better_edge(vor, v0, v1, dict_ridge_points, ridge_points_v0, path_lines=[], side_vectors=[]):
-    v0_x, v0_y = vor.vertices[v0]
-    v1_x, v1_y = vor.vertices[v1]
-    if (v0, v1) not in side_vectors or (v1, v0) not in side_vectors:
-        for rv in ridge_points_v0:
-            if rv == v1:
-                continue
-            if len(dict_ridge_points[rv]) <= 2:
-                for rrv in ridge_points_v0:
-                    rrv_x, rrv_y = vor.vertices[rrv]
-                    if len(dict_ridge_points[rrv]) >= 3:
-                        if rrv_y > v0_y:
-                            continue
-                        return (rrv, v1)
+    """
+    Bypasses the angle-seeking junction swap and returns the original edge.
+    This prevents the path planner from skipping local junctions.
+    """
     return (v0, v1)
 
 
-def get_vectors_area(line, lines, dict_ridge_points, vor, side_vectors, right, range_val=960):
+def is_line_on_sidewalk(p0, p1, binary_mask, h):
+    """
+    Checks if a line between two Cartesian points crosses any non-sidewalk pixel (0).
+    Maps Cartesian coordinates (flipped y) back to image array indices.
+    """
+    # Map from Cartesian setup back to image space array indices
+    x0, y0 = int(round(p0[0])), int(round(h - p0[1]))
+    x1, y1 = int(round(p1[0])), int(round(h - p1[1]))
+    
+    # Generate point coordinates along the segment line cleanly
+    num_samples = max(abs(x1 - x0), abs(y1 - y0), 2) * 2
+        
+    x_coords = np.linspace(x0, x1, num_samples)
+    y_coords = np.linspace(y0, y1, num_samples)
+    
+    mask_h, mask_w = binary_mask.shape
+    
+    for x, y in zip(x_coords, y_coords):
+        col, row = int(round(x)), int(round(y))
+        # Check boundary array layout constraints
+        if 0 <= col < mask_w and 0 <= row < mask_h:
+            if binary_mask[row, col] == 0:  # Touches non-sidewalk pixel
+                return False
+        else:
+            return False  # Line strays outside the image frame boundaries completely
+            
+    return True
+
+
+def get_vectors_area(line, lines, dict_ridge_points, vor, side_vectors, right, binary_mask, h, range_val=960):
     v0, v1 = line
     v0_x, v0_y = vor.vertices[v0]
     v1_x, v1_y = vor.vertices[v1]
@@ -96,17 +115,28 @@ def get_vectors_area(line, lines, dict_ridge_points, vor, side_vectors, right, r
             rv_x, rv_y = vor.vertices[rv]
             if rv == v1:
                 continue
+                
+            # SAFETY CONDITION: REJECT CROSSOVER TO OPPOSITE HALF OF THE IMAGE
+            image_center = range_val / 2.0
+            if right and rv_x < image_center:
+                continue  # Reject left-half points for right side vector
+            if not right and rv_x > image_center:
+                continue  # Reject right-half points for left side vector
+                
             if right and rv_x < v0_x:
                 continue
             if not right and rv_x > v0_x:
                 continue
+                
             ridge_points_rv = dict_ridge_points.get(rv, [])
             is_triangle_line_branching = False
+            resolved_rv = rv
+            prev_rv = rv
+            
             if len(ridge_points_rv) >= 3:
                 most_distant_rv = None
                 max_angle = 0
                 min_angle = 180
-                prev_rv = rv
                 for rrv in ridge_points_rv:
                     if rrv == v0 or rrv == v1:
                         continue
@@ -119,20 +149,26 @@ def get_vectors_area(line, lines, dict_ridge_points, vor, side_vectors, right, r
                         min_angle = rrv_angle
                         most_distant_rv = rrv
                 if most_distant_rv is not None:
-                    rv = most_distant_rv
+                    resolved_rv = most_distant_rv
                     is_triangle_line_branching = True
                 else:
                     continue
-            if v0_x < rv_x:
-                if rv_x - (320 * range_val / 960) > v0_x:
+
+            # VALIDATION STEP: Verify the linking line between the two unshared tips is entirely over sidewalk pixels
+            if not is_line_on_sidewalk(vor.vertices[resolved_rv], vor.vertices[v1], binary_mask, h):
+                continue
+
+            resolved_rv_x = vor.vertices[resolved_rv][0]
+            if v0_x < resolved_rv_x:
+                if resolved_rv_x - (320 * range_val / 960) > v0_x:
                     continue
             else:
-                if v0_x - (320 * range_val / 960) > rv_x:
+                if v0_x - (320 * range_val / 960) > resolved_rv_x:
                     continue
 
             if is_triangle_line_branching:
-                side_vectors.append((rv, prev_rv))
-            triangle_line = (v0, rv)
+                side_vectors.append((resolved_rv, prev_rv))
+            triangle_line = (v0, resolved_rv)
             side_vectors.append(triangle_line)
             is_triangle_line_found = True
             break
@@ -148,15 +184,26 @@ def get_vectors_area(line, lines, dict_ridge_points, vor, side_vectors, right, r
             rv_x, rv_y = vor.vertices[rv]
             if rv == v0:
                 continue
+                
+            # SAFETY CONDITION: REJECT CROSSOVER TO OPPOSITE HALF OF THE IMAGE
+            image_center = range_val / 2.0
+            if right and rv_x < image_center:
+                continue
+            if not right and rv_x > image_center:
+                continue
+                
             if right and rv_x < v1_x:
                 continue
             if not right and rv_x > v1_x:
                 continue
+                
             ridge_points_rv = dict_ridge_points.get(rv, [])
             is_triangle_line_branching = False
+            resolved_rv = rv
+            prev_rv = rv
+            
             if len(ridge_points_rv) >= 3:
                 most_distant_rv = None
-                prev_rv = rv
                 max_angle = 0
                 min_angle = 180
                 for rrv in ridge_points_rv:
@@ -171,20 +218,27 @@ def get_vectors_area(line, lines, dict_ridge_points, vor, side_vectors, right, r
                         min_angle = rrv_angle
                         most_distant_rv = rrv
                 if most_distant_rv is not None:
+                    resolved_rv = most_distant_rv
                     is_triangle_line_branching = True
-                    rv = most_distant_rv
                 else:
                     continue
-            if v1_x < rv_x:
-                if rv_x - (320 * range_val / 960) > v1_x:
+
+            # VALIDATION STEP: Verify the linking line between the two unshared tips is entirely over sidewalk pixels
+            if not is_line_on_sidewalk(vor.vertices[resolved_rv], vor.vertices[v0], binary_mask, h):
+                continue
+
+            resolved_rv_x = vor.vertices[resolved_rv][0]
+            if v1_x < resolved_rv_x:
+                if resolved_rv_x - (320 * range_val / 960) > v1_x:
                     continue
             else:
-                if v1_x - (320 * range_val / 960) > rv_x:
+                if v1_x - (320 * range_val / 960) > resolved_rv_x:
                     continue
-            if is_triangle_line_branching:
-                side_vectors.append((rv, prev_rv))
 
-            triangle_line = (v1, rv)
+            if is_triangle_line_branching:
+                side_vectors.append((resolved_rv, prev_rv))
+
+            triangle_line = (v1, resolved_rv)
             side_vectors.append(triangle_line)
             is_triangle_line_found = True
             break
@@ -235,7 +289,6 @@ def get_right_lowest_and_left_lowest_line(lines, vor):
         key=lambda l: get_midpoint(vor.vertices[l[0]], vor.vertices[l[1]])[0]
     )
     
-    # Handle single line edge-case safely
     if len(sorted_lines) == 1:
         return sorted_lines[0], sorted_lines[0]
 
@@ -243,7 +296,6 @@ def get_right_lowest_and_left_lowest_line(lines, vor):
     left_lines = sorted_lines[:mid_idx]
     right_lines = sorted_lines[mid_idx:]
 
-    # Ensure no division results in empty arrays
     if not left_lines:
         left_lines = [sorted_lines[0]]
     if not right_lines:
@@ -325,7 +377,6 @@ def get_skeleton_lines(vor, poly_pts):
             continue
         v0, v1 = vor.vertices[rv[0]], vor.vertices[rv[1]]
         
-        # Fast midpoint & endpoint checks (no shapely dependency)
         if not is_point_in_polygon(v0, poly_pts):
             continue
         if not is_point_in_polygon(v1, poly_pts):
@@ -342,7 +393,6 @@ def get_skeleton_lines(vor, poly_pts):
             continue
         v0, v1 = vor.vertices[rv[0]], vor.vertices[rv[1]]
         
-        # Fast midpoint & endpoint checks
         if not is_point_in_polygon(v0, poly_pts):
             continue
         if not is_point_in_polygon(v1, poly_pts):
@@ -413,11 +463,10 @@ def get_skeleton_lines(vor, poly_pts):
     return skeleton_lines, dict_ridge_points
 
 
-def interpreting_skeletons(skeleton_lines, dict_ridge_points, vor, straight_path=None, scale_factor=1.0):
+def interpreting_skeletons(skeleton_lines, dict_ridge_points, vor, straight_path, binary_mask, h, scale_factor=1.0):
     if not skeleton_lines:
-        return [], 0.0, 0.0, None, [], 0.0, 0.0
+        return [], 0.0, 0.0, None, [], 0.0, 0.0, None, None
 
-    # Handle single line scenario to prevent min() errors
     if len(skeleton_lines) < 2:
         single_line = skeleton_lines[0]
         v0, v1 = single_line
@@ -426,11 +475,20 @@ def interpreting_skeletons(skeleton_lines, dict_ridge_points, vor, straight_path
         if v0_y > v1_y:
             v0_x, v0_y, v1_x, v1_y = v1_x, v1_y, v0_x, v0_y
         best_angle = get_angle(v0_x, v0_y, v1_x, v1_y)
-        return skeleton_lines, best_angle, 0.0, single_line, [], 0.0, 0.0
+        return skeleton_lines, best_angle, 0.0, single_line, [], 0.0, 0.0, None, None
 
     left_lowest_line, right_lowest_line = get_right_lowest_and_left_lowest_line(skeleton_lines, vor)
     if left_lowest_line is None or right_lowest_line is None:
-        return [], 0.0, 0.0, None, [], 0.0, 0.0
+        return [], 0.0, 0.0, None, [], 0.0, 0.0, None, None
+
+    # Track the lowest points of left and right side vectors (closer to robot)
+    pt0_l = vor.vertices[left_lowest_line[0]]
+    pt1_l = vor.vertices[left_lowest_line[1]]
+    left_lower_pt = pt0_l if pt0_l[1] < pt1_l[1] else pt1_l
+
+    pt0_r = vor.vertices[right_lowest_line[0]]
+    pt1_r = vor.vertices[right_lowest_line[1]]
+    right_lower_pt = pt0_r if pt0_r[1] < pt1_r[1] else pt1_r
 
     range_val = max(vor.vertices[right_lowest_line[0]][0], vor.vertices[right_lowest_line[1]][0]) - \
                 min(vor.vertices[left_lowest_line[0]][0], vor.vertices[left_lowest_line[1]][0])
@@ -439,8 +497,8 @@ def interpreting_skeletons(skeleton_lines, dict_ridge_points, vor, straight_path
     side_vectors.append(left_lowest_line)
     side_vectors.append(right_lowest_line)
 
-    area_left, side_vectors = get_vectors_area(left_lowest_line, skeleton_lines, dict_ridge_points, vor, side_vectors, False, range_val)
-    area_right, side_vectors = get_vectors_area(right_lowest_line, skeleton_lines, dict_ridge_points, vor, side_vectors, True, range_val)
+    area_left, side_vectors = get_vectors_area(left_lowest_line, skeleton_lines, dict_ridge_points, vor, side_vectors, False, binary_mask, h, range_val)
+    area_right, side_vectors = get_vectors_area(right_lowest_line, skeleton_lines, dict_ridge_points, vor, side_vectors, True, binary_mask, h, range_val)
 
     area_difference = area_left - area_right
     area_percentage_difference = (area_difference / max(area_left, area_right)) * 100 if max(area_left, area_right) > 0 else 0
@@ -460,7 +518,7 @@ def interpreting_skeletons(skeleton_lines, dict_ridge_points, vor, straight_path
     else:
         _, best_possible_path, best_angle = find_straight_path(path_lines, vor, straight_path, scale_factor)
     
-    return path_lines, best_angle, area_percentage_difference, best_possible_path, side_vectors, area_left, area_right
+    return path_lines, best_angle, area_percentage_difference, best_possible_path, side_vectors, area_left, area_right, left_lower_pt, right_lower_pt
 
 
 # =====================================================================
@@ -493,6 +551,10 @@ class VoronoiPathPlanner(Node):
         self.area_left_pub = self.create_publisher(Float32, '/voronoi/area_left', 10)
         self.area_right_pub = self.create_publisher(Float32, '/voronoi/area_right', 10)
         
+        # Side-vector Publishers (midpoint + distance)
+        self.side_mid_pub = self.create_publisher(Float32, '/voronoi/side_vector_mid_x', 10)
+        self.side_dist_pub = self.create_publisher(Float32, '/voronoi/side_vector_distance', 10)
+        
         # Subscriber (Latest-only QoS pattern to completely avoid latency backlogs)
         qos_profile = QoSProfile(
             reliability=ReliabilityPolicy.BEST_EFFORT,
@@ -523,7 +585,7 @@ class VoronoiPathPlanner(Node):
                 self.get_logger().error(f"Unsupported image encoding received: {msg.encoding}")
                 return
 
-            # 2. Rescale image to targeted standard dimensions (Optimized back to 960x720)
+            # 2. Rescale image to targeted standard dimensions
             w, h = self.resize_width, self.resize_height
             clean_mask = cv2.resize(clean_mask, (w, h))
 
@@ -533,17 +595,11 @@ class VoronoiPathPlanner(Node):
             else:
                 binary_mask = cv2.inRange(clean_mask, self.target_gray, self.target_gray)
 
-            # if np.count_nonzero(binary_mask) == 0:
-            #     self.publish_empty_pose_array(msg.header)
-            #     self.publish_blank_debug_image(msg.header) # <-- Added safety display trigger
-            #     return
-
              # 4. Extract external contours for boundaries
             contours, _ = cv2.findContours(binary_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
             if not contours:
                 return
 
-                
             contour = max(contours, key=cv2.contourArea)
             boundary_points = contour.squeeze()
 
@@ -561,36 +617,27 @@ class VoronoiPathPlanner(Node):
             # Build polygon using a buffered boundary shape
             polygon = Polygon(boundary_points_cartesian).buffer(0)
 
-            # Compute Voronoi Structure on the 960x720 scaled points
+            # Compute Voronoi Structure on the points
             vor = Voronoi(boundary_points_ordered)
 
             # Process Voronoi finite skeletal vectors using fast Point-in-Polygon checks
             skeleton_lines, dict_ridge_points = get_skeleton_lines(vor, boundary_points_ordered)
-            # if not skeleton_lines:
-            #     self.publish_empty_pose_array(msg.header)
-            #     self.publish_blank_debug_image(msg.header) # <-- Added safety display trigger
-            #     return
 
-            # Compute target planning vectors
-            paths, best_angle, area_percentage_diff, best_path, side_vectors, area_left, area_right = interpreting_skeletons(
-                skeleton_lines, dict_ridge_points, vor, self.prev_best_path_coords
+            # Compute target planning vectors (Passing binary mask and target height context)
+            paths, best_angle, area_percentage_diff, best_path, side_vectors, area_left, area_right, left_lower_pt, right_lower_pt = interpreting_skeletons(
+                skeleton_lines, dict_ridge_points, vor, self.prev_best_path_coords, binary_mask, h
             )
 
-            # # Retain coordinate state track history (in unscaled 960x720 space)
-            # if best_path is not None:
-            #     p0_cart = vor.vertices[best_path[0]]
-            #     p1_cart = vor.vertices[best_path[1]]
-            #     self.prev_best_path_coords = (p0_cart, p1_cart)
+            # Retain coordinate state track history
+            if best_path is not None:
+                p0_cart = vor.vertices[best_path[0]]
+                p1_cart = vor.vertices[best_path[1]]
+                self.prev_best_path_coords = (p0_cart, p1_cart)
                 
-            #     # Publish physical coordinates directly (no scaling back needed)
-            #     self.publish_best_path_pose_array(msg.header, p0_cart, p1_cart)
-            # else:
-            #     self.prev_best_path_coords = None
-            #     self.publish_empty_pose_array(msg.header)
-            #     self.publish_blank_debug_image(msg.header) # <-- Added safety display trigger
-            #     return
+                # Publish physical coordinates directly
+                self.publish_best_path_pose_array(msg.header, p0_cart, p1_cart)
 
-            # # 5. Publish Steering Control Parameters
+            # 5. Publish Steering Control Parameters
             angle_msg = Float32()
             angle_msg.data = float(best_angle)
             self.angle_pub.publish(angle_msg)
@@ -599,7 +646,7 @@ class VoronoiPathPlanner(Node):
             area_msg.data = float(area_percentage_diff)
             self.area_diff_pub.publish(area_msg)
 
-            # Publish individual areas directly (no scale multipliers needed)
+            # Publish individual areas directly
             area_left_msg = Float32()
             area_left_msg.data = float(area_left)
             self.area_left_pub.publish(area_left_msg)
@@ -607,6 +654,18 @@ class VoronoiPathPlanner(Node):
             area_right_msg = Float32()
             area_right_msg.data = float(area_right)
             self.area_right_pub.publish(area_right_msg)
+
+            # --- PUBLISH THE SIDE VECTOR BOTTOM-POINTS MIDPOINT AND DISTANCE ---
+            side_mid_msg = Float32()
+            side_dist_msg = Float32()
+            if left_lower_pt is not None and right_lower_pt is not None:
+                side_mid_msg.data = float((left_lower_pt[0] + right_lower_pt[0]) / 2.0)
+                side_dist_msg.data = float(abs(right_lower_pt[0] - left_lower_pt[0]))
+            else:
+                side_mid_msg.data = -1.0
+                side_dist_msg.data = -1.0
+            self.side_mid_pub.publish(side_mid_msg)
+            self.side_dist_pub.publish(side_dist_msg)
 
             # 6. Build and publish visual debug mapping (scaled to 0.5x of the target resize dimensions)
             dbg_w = int(self.resize_width * 0.5)
@@ -620,23 +679,20 @@ class VoronoiPathPlanner(Node):
             self.get_logger().error(f"Voronoi pipeline error: {str(e)}")
 
     def generate_debug_image(self, shape, boundary_points, skeleton, paths, side_vectors, best_path, vor):
-        h, w = shape  # Debug canvas dimensions (e.g. 360, 480)
+        h, w = shape
         canvas = np.zeros((h, w, 3), dtype=np.uint8)
 
-        # Scale coordinates from 960x720 processing space to target debug display space
-        scale_x = w / float(self.resize_width)  # 480 / 960 = 0.5
-        scale_y = h / float(self.resize_height) # 360 / 720 = 0.5
+        # Scale coordinates from processing space to target debug display space
+        scale_x = w / float(self.resize_width)
+        scale_y = h / float(self.resize_height)
 
-        # Helper to convert Cartesian coordinate from vor.vertices back to standard Image space
         def to_img_space(pt):
             return int(pt[0] * scale_x), int(h - (pt[1] * scale_y))
 
-        # Dynamically scale visual elements (0.5 scale factor for 0.5x display)
         line_thick = max(1, int(2 * 0.5))      
         best_line_thick = max(1, int(4 * 0.5)) 
         circle_rad = max(2, int(6 * 0.5))      
 
-        # Draw outer boundary contour fill
         boundary_pts_img = np.array([to_img_space(p) for p in boundary_points], dtype=np.int32)
         cv2.polylines(canvas, [boundary_pts_img], isClosed=True, color=(120, 120, 120), thickness=line_thick)
         cv2.fillPoly(canvas, [boundary_pts_img], color=(30, 30, 30))
@@ -684,7 +740,6 @@ class VoronoiPathPlanner(Node):
         self.debug_img_pub.publish(debug_msg)
 
     def publish_blank_debug_image(self, header):
-        """Draws a 'NO PATH DETECTED' warning canvas to keep the display active on startup."""
         dbg_w = int(self.resize_width * 0.5)
         dbg_h = int(self.resize_height * 0.5)
         canvas = np.zeros((dbg_h, dbg_w, 3), dtype=np.uint8)
@@ -710,7 +765,7 @@ class VoronoiPathPlanner(Node):
         pose0.position.z = 0.0
 
         pose1 = Pose()
-        pose1.position.x = float(p1_cart[0]) # <-- Fixed typo from p0_cart
+        pose1.position.x = float(p1_cart[0])
         pose1.position.y = float(p1_cart[1])
         pose1.position.z = 0.0
 
