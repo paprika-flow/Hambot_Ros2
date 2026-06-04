@@ -89,7 +89,7 @@ def generate_launch_description():
     pkg_ros_gz_sim = get_package_share_directory('ros_gz_sim')
 
     # --- Count available waypoints for help text ---
-    world_file = os.path.join(pkg_bringup, 'worlds', 'campus_map.sdf')
+    world_file = os.path.join(pkg_bringup, 'worlds', 'campus_map2.sdf')
     points = parse_waypoints(world_file)
     num_points = len(points)
     label_list = ', '.join(p['label'] for p in points[:6])
