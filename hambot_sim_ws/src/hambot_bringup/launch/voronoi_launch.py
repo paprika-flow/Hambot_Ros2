@@ -1,16 +1,95 @@
 import os
+import re
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import IncludeLaunchDescription
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, OpaqueFunction
 from launch.launch_description_sources import PythonLaunchDescriptionSource
+from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 import xacro
+
+def parse_spawn_points(world_path):
+    """
+    Read <frame> elements from SDF world file.
+    Extract name=start_position_N → x, y, z, yaw.
+    Return list of dicts sorted by N.
+    """
+    if not os.path.exists(world_path):
+        return []
+
+    with open(world_path) as f:
+        content = f.read()
+
+    # Match: <frame name="start_position_(\d+)">\n  <pose>X Y Z R P Y</pose>
+    pattern = (
+        r'<frame\s+name="start_position_(\d+)"[^>]*>\s*'
+        r'<pose>([\d.-]+)\s+([\d.-]+)\s+([\d.-]+)\s+[\d.-]+\s+[\d.-]+\s+([\d.-]+)</pose>'
+    )
+    matches = re.findall(pattern, content)
+
+    points = []
+    for num_str, x_str, y_str, z_str, yaw_str in matches:
+        points.append({
+            'id': int(num_str),
+            'x': float(x_str),
+            'y': float(y_str),
+            'z': float(z_str),
+            'yaw': float(yaw_str),
+        })
+
+    points.sort(key=lambda p: p['id'])
+    return points
+
+
+def spawn_robot_action(context):
+    """Create spawn robot node using the selected start point parsed from SDF."""
+    pkg_bringup = get_package_share_directory('hambot_bringup')
+    world_file = os.path.join(pkg_bringup, 'worlds', 'campus_map.sdf')
+    points = parse_spawn_points(world_file)
+    num_points = len(points)
+
+    point_str = LaunchConfiguration('start_point').perform(context)
+    idx = int(point_str) if point_str.isdigit() else 1
+    idx = max(1, min(idx, num_points))  # clamp to valid range
+
+    pose = points[idx - 1]  # 1-indexed arg → 0-indexed list
+
+    return [
+        Node(
+            package='ros_gz_sim',
+            executable='create',
+            arguments=[
+                '-name', 'hambot',
+                '-topic', 'robot_description',
+                '-x', str(pose['x']),
+                '-y', str(pose['y']),
+                '-z', str(pose['z']),
+                '-Y', str(pose['yaw']),
+            ],
+            output='screen',
+        )
+    ]
+
 
 def generate_launch_description():
     pkg_description = get_package_share_directory('hambot_description')
     pkg_bringup = get_package_share_directory('hambot_bringup')
     pkg_ros_gz_sim = get_package_share_directory('ros_gz_sim')
+    
+    # --- Count available spawn points for help text ---
+    world_file = os.path.join(pkg_bringup, 'worlds', 'campus_test.sdf')
+    num_points = len(parse_spawn_points(world_file))
 
+     # --- Launch args ---
+    start_point_arg = DeclareLaunchArgument(
+        'start_point',
+        default_value='1',
+        description=(
+            f'Spawn point index (1-{num_points}). '
+            f'Parsed automatically from <frame name="start_position_N"> '
+            f'in campus_map.sdf. Default=1.'
+        )
+    )
     # Process Xacro
     xacro_file = os.path.join(pkg_description, 'urdf', 'hambot.urdf.xacro')
     robot_description_raw = xacro.process_file(xacro_file).toxml()
@@ -26,8 +105,7 @@ def generate_launch_description():
         }]
     )
 
-    # Path to newly created custom SDF world file
-    world_file = os.path.join(pkg_bringup, 'worlds', 'campus_map.sdf')
+    
 
     # Include Gazebo Launch 
     gazebo_sim = IncludeLaunchDescription(
@@ -38,16 +116,7 @@ def generate_launch_description():
     )
 
     # Spawn Robot Node
-    spawn_robot = Node(
-        package='ros_gz_sim',
-        executable='create',
-        arguments=[
-            '-name', 'hambot',
-            '-topic', 'robot_description',
-            '-x', '-4.5', '-y', '0.0', '-z', '0.1'
-        ],
-        output='screen'
-    )
+    spawn_robot = OpaqueFunction(function=spawn_robot_action)
 
     # ROS-Gazebo Bridge
     bridge = Node(
@@ -112,6 +181,7 @@ def generate_launch_description():
     )
 
     return LaunchDescription([
+        start_point_arg,
         robot_state_publisher,
         gazebo_sim,
         spawn_robot,
