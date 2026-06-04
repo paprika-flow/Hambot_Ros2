@@ -1,5 +1,6 @@
 import os
 import re
+import yaml
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, OpaqueFunction
@@ -7,6 +8,9 @@ from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 import xacro
+
+
+SDF_WORLD = 'campus_map2.sdf'  # active world file
 
 
 def parse_waypoints(world_path):
@@ -43,13 +47,34 @@ def parse_waypoints(world_path):
 
 
 def spawn_robot_action(context):
-    """Create spawn robot node — spawn_point=label, optional rotation=override_yaw."""
+    """
+    Create spawn robot node.
+    If route file provided, reads 'start' waypoint from YAML.
+    Otherwise uses 'spawnpoint' argument.
+    """
     pkg_bringup = get_package_share_directory('hambot_bringup')
-    world_file = os.path.join(pkg_bringup, 'worlds', 'campus_map.sdf')
+    world_file = os.path.join(pkg_bringup, 'worlds', SDF_WORLD)
     points = parse_waypoints(world_file)
     num_points = len(points)
 
-    label_arg = LaunchConfiguration('spawn_point').perform(context).strip()
+    # Determine start label: route file takes priority
+    route_arg = LaunchConfiguration('route').perform(context).strip()
+    label_arg = None
+
+    if route_arg:
+        try:
+            with open(route_arg) as f:
+                route_data = yaml.safe_load(f)
+            label_arg = route_data.get('start', '').strip()
+        except Exception:
+            pass
+
+    if not label_arg:
+        label_arg = LaunchConfiguration('spawnpoint').perform(context).strip()
+
+    if not label_arg:
+        label_arg = points[0]['label'] if points else ''
+
     rotation_arg = LaunchConfiguration('rotation').perform(context).strip()
 
     # Find matching waypoint
@@ -89,7 +114,7 @@ def generate_launch_description():
     pkg_ros_gz_sim = get_package_share_directory('ros_gz_sim')
 
     # --- Count available waypoints for help text ---
-    world_file = os.path.join(pkg_bringup, 'worlds', 'campus_map2.sdf')
+    world_file = os.path.join(pkg_bringup, 'worlds', SDF_WORLD)
     points = parse_waypoints(world_file)
     num_points = len(points)
     label_list = ', '.join(p['label'] for p in points[:6])
@@ -98,11 +123,20 @@ def generate_launch_description():
     first_label = points[0]['label'] if points else 'none'
 
     # --- Launch args ---
+    route_arg = DeclareLaunchArgument(
+        'route',
+        default_value='',
+        description=(
+            f'Path to route YAML file. '
+            f'If set, robot spawns at `start:` waypoint and follows waypoint list. '
+            f'If empty, use spawnpoint arg instead.'
+        )
+    )
     spawnpoint_arg = DeclareLaunchArgument(
         'spawnpoint',
         default_value=first_label,
         description=(
-            f'Waypoint label to spawn at. '
+            f'Waypoint label to spawn at (used only if route not provided). '
             f'Available: {label_list}. '
             f'Default: {first_label}.'
         )
@@ -191,10 +225,12 @@ def generate_launch_description():
             'lidar_topic': '/scan',
             'robot_radius': 0.30,
             'obstacle_inflation': 0.15,
+            'route_file': LaunchConfiguration('route'),
         }]
     )
 
     return LaunchDescription([
+        route_arg,
         spawnpoint_arg,
         rotation_arg,
         robot_state_publisher,

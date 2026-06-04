@@ -12,9 +12,13 @@ import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import Image, LaserScan
 from geometry_msgs.msg import Twist
+from nav_msgs.msg import Odometry
 import numpy as np
 import math
 import heapq
+import os
+import yaml
+from ament_index_python.packages import get_package_share_directory
 
 
 # ════════════════════════════════════════════════════════════════
@@ -127,6 +131,138 @@ class Action(BTNode):
 
 
 # ════════════════════════════════════════════════════════════════
+# ROUTE MANAGER
+# ════════════════════════════════════════════════════════════════
+
+def euler_from_quaternion(q):
+    """Extract yaw from ROS Quaternion."""
+    siny_cosp = 2.0 * (q.w * q.z + q.x * q.y)
+    cosy_cosp = 1.0 - 2.0 * (q.y * q.y + q.z * q.z)
+    return math.atan2(siny_cosp, cosy_cosp)
+
+
+class RouteManager:
+    """
+    Tracks progress through an ordered list of waypoints.
+
+    Each tick: caller calls check_arrival(x, y, yaw).
+    If distance to current waypoint < threshold, advance index.
+    If waypoint is significantly behind robot, skip it.
+
+    Public interface:
+      .current()      → waypoint name or None
+      .current_pose() → (x, y) or None
+      .finished       → bool (True after last waypoint consumed)
+      .advance_count  → int (how many waypoints completed)
+    """
+
+    def __init__(self, waypoint_names, waypoint_poses, threshold=1.5):
+        """
+        waypoint_names: ordered list of strings (from route file)
+        waypoint_poses: dict name → (x_world, y_world)
+        threshold: meters — robot within this = arrived
+        """
+        self.names = waypoint_names
+        self.poses = waypoint_poses
+        self.threshold = threshold
+        self.index = 0
+        self.finished = False
+        self.advance_count = 0
+        self._arrived = set()  # waypoint indices already claimed
+
+    def current(self):
+        """Return current waypoint name or None if finished."""
+        if self.finished or self.index >= len(self.names):
+            return None
+        name = self.names[self.index]
+        if name == '__stop__':
+            return None
+        return name
+
+    def current_pose(self):
+        """Return (x, y) of current waypoint or None."""
+        name = self.current()
+        if name is None:
+            return None
+        pose = self.poses.get(name)
+        if pose is None:
+            return None
+        return pose  # (x, y) only
+
+    def check_arrival(self, x, y, yaw):
+        """
+        Check if robot reached current waypoint.
+        Advances index if within threshold or significantly behind.
+        Call every tick. Logs advances.
+        Returns (advanced, skipped) booleans.
+        """
+        if self.finished or self.index >= len(self.names):
+            return False, False
+
+        name = self.names[self.index]
+
+        # __stop__ is end marker
+        if name == '__stop__':
+            self.finished = True
+            return True, False
+
+        pose = self.poses.get(name)
+        if pose is None:
+            # Unknown waypoint name — skip it
+            self.index += 1
+            self.advance_count += 1
+            return False, 'unknown'
+
+        # Already claimed this index?
+        if self.index in self._arrived:
+            return False, False
+
+        wx, wy = pose[:2]
+        dx = wx - x
+        dy = wy - y
+        dist = math.hypot(dx, dy)
+
+        # Vector from robot to waypoint (forward component in robot's heading)
+        fwd = dx * math.cos(yaw) + dy * math.sin(yaw)
+
+        # Arrived by proximity
+        if dist < self.threshold:
+            self._arrived.add(self.index)
+            self.index += 1
+            self.advance_count += 1
+            return True, False
+
+        # Waypoint significantly behind AND close — robot missed/passed it
+        if fwd < -self.threshold * 2 and dist < self.threshold * 4:
+            self._arrived.add(self.index)
+            self.index += 1
+            self.advance_count += 1
+            return False, True
+
+        return False, False
+
+    def remaining(self):
+        """Return number of waypoints left (excluding __stop__)."""
+        count = 0
+        for i in range(self.index, len(self.names)):
+            if self.names[i] == '__stop__':
+                break
+            count += 1
+        return count
+
+    def total_waypoints(self):
+        """Total waypoints excluding __stop__."""
+        return sum(1 for n in self.names if n != '__stop__')
+
+    def progress_str(self):
+        total = self.total_waypoints()
+        done = self.advance_count
+        if total == 0:
+            return 'unknown'
+        return f'{done}/{total} waypoints'
+
+
+# ════════════════════════════════════════════════════════════════
 # COSTMAP GRID
 # ════════════════════════════════════════════════════════════════
 
@@ -206,13 +342,16 @@ class CostmapGrid:
             unk = (row[left:right + 1] == 254)
             row[left:right + 1][unk] = 0
 
-    def find_goal(self, goal_row):
+    def find_goal(self, goal_row, bias_col=None):
         lo = min(self.rows - 2, goal_row + 5)
         hi = max(1, goal_row - 5)
         for r in range(lo, hi - 1, -1):
             sw = np.where(self.costmap[r, :] < 200)[0]
             if len(sw) > 0:
-                center = self.cols // 2
+                if bias_col is not None:
+                    center = max(0, min(self.cols - 1, bias_col))
+                else:
+                    center = self.cols // 2
                 best = sw[np.argmin(np.abs(sw - center))]
                 return (r, best)
         return None
@@ -279,6 +418,35 @@ class CostmapGrid:
 # BT CONDITIONS & ACTIONS
 # ════════════════════════════════════════════════════════════════
 
+# ── Route conditions ──
+
+def cond_route_active(bb):
+    """Route loaded and not finished."""
+    route = bb.get('route')
+    if route is None or route.finished:
+        return False
+    # Current waypoint exists OR we're at __stop__ (need CheckArrival to set finished)
+    if route.current() is not None:
+        return True
+    # Check if index points to __stop__ without finished flag yet
+    idx = route.index
+    return idx < len(route.names) and route.names[idx] == '__stop__'
+
+
+def cond_route_inactive(bb):
+    """No route loaded (free navigation mode)."""
+    route = bb.get('route')
+    return route is None
+
+
+def cond_route_finished(bb):
+    """Route loaded and complete."""
+    route = bb.get('route')
+    if route is None:
+        return False
+    return route.finished
+
+
 def cond_goal_found(bb):
     return bb.get('goal') is not None
 
@@ -288,10 +456,137 @@ def cond_path_found(bb):
     return p is not None and len(p) >= 2
 
 
+# ── Route actions ──
+
+def act_check_arrival(bb):
+    """
+    Check odometry against current waypoint.
+    Advances route index if close enough or waypoint is behind.
+    Always SUCCESS — checking never fails.
+    """
+    route = bb.get('route')
+    node = bb['node']
+    if route is None or route.finished:
+        return BT.SUCCESS
+
+    x = bb.get('odom_x', 0.0)
+    y = bb.get('odom_y', 0.0)
+    yaw = bb.get('odom_yaw', 0.0)
+
+    # Save current waypoint name before advance (for ARRIVED log)
+    old_name = route.current()
+
+    advanced, skipped = route.check_arrival(x, y, yaw)
+
+    if advanced:
+        if old_name:
+            node.get_logger().info(f'ARRIVED at {old_name}')
+        cur = route.current()
+        if cur:
+            pose = route.current_pose()
+            dist_str = ''
+            if pose:
+                dx = bb.get('odom_x', 0.0) - pose[0]
+                dy = bb.get('odom_y', 0.0) - pose[1]
+                dist_str = f' \u2014 {math.hypot(dx, dy):.1f}m away'
+            node.get_logger().info(
+                f'NEXT WP: {cur} at ({pose[0]:.1f}, {pose[1]:.1f}){dist_str}'
+            )
+        else:
+            node.get_logger().info('ARRIVED at final waypoint \u2014 mission complete')
+    elif skipped is True:
+        rem = route.remaining()
+        cur = route.current()
+        if cur:
+            pose = route.current_pose()
+            if pose:
+                node.get_logger().info(
+                    f'Skipped waypoint (behind). NEXT WP: {cur} at ({pose[0]:.1f}, {pose[1]:.1f}) — {rem} remaining.'
+                )
+        else:
+            node.get_logger().info(f'Skipped waypoint "{old_name}" — reached __stop__')
+    elif skipped == 'unknown':
+        node.get_logger().warn(f'Skipped waypoint "{old_name}" — not found in SDF.')
+
+    return BT.SUCCESS
+
+
+def act_compute_waypoint_bias(bb):
+    """
+    Compute lateral costmap bias toward current waypoint.
+    Converts world-frame waypoint → robot-relative lateral offset → costmap column shift.
+    Stores result in bb['bias_col'].
+    """
+    route = bb.get('route')
+    if route is None or route.finished:
+        bb['bias_col'] = None
+        return BT.SUCCESS
+
+    name = route.current()
+    if name is None:
+        bb['bias_col'] = None
+        return BT.SUCCESS
+
+    pose = route.current_pose()
+    if pose is None:
+        bb['bias_col'] = None
+        return BT.SUCCESS
+
+    x = bb.get('odom_x', 0.0)
+    y = bb.get('odom_y', 0.0)
+    yaw = bb.get('odom_yaw', 0.0)
+    cols = bb['cols']
+    cs = bb['cell_size']
+
+    wx, wy = pose
+
+    # Vector from robot to waypoint, in world frame
+    dx_world = wx - x
+    dy_world = wy - y
+
+    # Rotate into robot's local frame
+    dx_local = dx_world * math.cos(yaw) + dy_world * math.sin(yaw)
+    dy_local = -dx_world * math.sin(yaw) + dy_world * math.cos(yaw)
+
+    # Log before any early return — user needs to see every frame
+    node = bb['node']
+    route = bb.get('route')
+    cur_name = route.current() if route else None
+    dist = math.hypot(dx_world, dy_world)
+
+    if dx_local < -1.0:
+        bb['bias_col'] = None
+        node.get_logger().info(
+            f'route: odom=({x:.2f},{y:.2f}) yaw={yaw:.2f} '
+            f'wp={cur_name} at ({wx:.1f},{wy:.1f}) '
+            f'local=({dx_local:.1f},{dy_local:.1f}) dist={dist:.1f}m '
+            f'behind bias_col=None'
+        )
+        return BT.SUCCESS
+
+    # Convert lateral offset to costmap column
+    col_offset = int(dy_local / cs)
+    bias_col = (cols // 2) + col_offset
+    bias_col = max(0, min(cols - 1, bias_col))
+    bb['bias_col'] = bias_col
+
+    node.get_logger().info(
+        f'route: odom=({x:.2f},{y:.2f}) yaw={yaw:.2f} '
+        f'wp={cur_name} at ({wx:.1f},{wy:.1f}) '
+        f'local=({dx_local:.1f},{dy_local:.1f}) dist={dist:.1f}m '
+        f'active bias_col={bias_col}'
+    )
+
+    return BT.SUCCESS
+
+
+# ── Core navigation actions ──
+
 def act_find_goal(bb):
-    """Run goal search on the built costmap. Stores result in bb."""
+    """Run goal search on the built costmap. Optionally shifted by bias_col."""
     grid = bb['grid']
-    goal = grid.find_goal(bb['goal_row'])
+    bias_col = bb.get('bias_col', None)
+    goal = grid.find_goal(bb['goal_row'], bias_col=bias_col)
     bb['goal'] = goal
     return BT.SUCCESS if goal is not None else BT.FAILURE
 
@@ -363,6 +658,17 @@ def act_stop(bb):
     return BT.SUCCESS
 
 
+def act_log_mission_complete(bb):
+    """Log mission complete. Does not stop — visual centering keeps robot on path."""
+    if bb.get('_mission_logged', False):
+        return BT.SUCCESS
+    bb['_mission_logged'] = True
+    node = bb['node']
+    node.get_logger().info('ARRIVED at final waypoint — mission complete')
+    node.get_logger().info('Stopping.')
+    return BT.SUCCESS
+
+
 # ════════════════════════════════════════════════════════════════
 # ROS 2 NODE
 # ════════════════════════════════════════════════════════════════
@@ -392,6 +698,7 @@ class CostmapNavigator(Node):
         self.declare_parameter('lidar_topic', '/scan')
         self.declare_parameter('robot_radius', 0.15)
         self.declare_parameter('obstacle_inflation', 0.30)
+        self.declare_parameter('route_file', '')  # path to route YAML
 
         seg_topic = self.get_parameter('segmentation_topic').value
         lidar_topic = self.get_parameter('lidar_topic').value
@@ -437,41 +744,228 @@ class CostmapNavigator(Node):
         # ROS wiring
         self.create_subscription(Image, seg_topic, self.mask_callback, 10)
         self.create_subscription(LaserScan, lidar_topic, self.lidar_callback, 10)
+        self.create_subscription(Odometry, '/odom', self.odom_callback, 10)
         self.vel_pub = self.create_publisher(Twist, '/cmd_vel', 10)
         self.debug_pub = self.create_publisher(Image, '/costmap/debug_image', 10)
+
+        # ── Odometry state ──
+        self.odom_x = 0.0
+        self.odom_y = 0.0
+        self.odom_yaw = 0.0
+
+        # ── Route loading ──
+        route_file = self.get_parameter('route_file').value
+        route = self._load_route(route_file)
 
         # ── Blackboard ──
         # Shared state read/written by BT nodes + callbacks
         self.bb = {
             'node': self,
             'grid': self.grid,
+            'route': route,
             'goal_row': self.goal_row,
             'robot_cell': self.robot_cell,
             'rows': self.rows,
             'cols': self.cols,
+            'cell_size': float(cs),
             'kp': self.kp,
             'linear_speed': self.linear_speed,
             'goal': None,
             'path': None,
+            'bias_col': None,
+            'odom_x': 0.0,
+            'odom_y': 0.0,
+            'odom_yaw': 0.0,
         }
 
         # ── Behavior Tree ──
         # Root: Fallback — try behaviors in priority order
-        #   1. Navigate (Sequence): find goal → plan path → follow path
-        #   2. Stop (Action): last resort, publish zero
+        #   1. RouteNavigate (Sequence): active route → check arrival → bias → plan → steer
+        #   2. FreeNavigate (Sequence): no route → plan → steer (original behavior)
+        #   3. Stop (Action): last resort
+
+        # Common steering subtree
+        steer_subtree = Sequence([
+            Action(act_find_goal, 'FindGoal'),
+            Action(act_plan_path, 'PlanPath'),
+            Action(act_follow_path, 'FollowPath'),
+        ], name='Steer')
+
         self.bt_root = Fallback([
+            # Route-guided navigation (waypoints active)
             Sequence([
-                Action(act_find_goal, 'FindGoal'),
-                Action(act_plan_path, 'PlanPath'),
-                Action(act_follow_path, 'FollowPath'),
-            ], name='Navigate'),
+                Condition(cond_route_active, 'RouteActive?'),
+                Action(act_check_arrival, 'CheckArrival'),
+                Action(act_compute_waypoint_bias, 'ComputeBias'),
+                steer_subtree,
+            ], name='RouteNavigate'),
+
+            # Free navigation (no route loaded)
+            Sequence([
+                Condition(cond_route_inactive, 'NoRoute?'),
+                steer_subtree,
+            ], name='FreeNavigate'),
+
+            # Route finished — log and stop
+            Sequence([
+                Condition(cond_route_finished, 'RouteFinished?'),
+                Action(act_log_mission_complete, 'LogComplete'),
+                Action(act_stop, 'Stop'),
+            ], name='MissionComplete'),
+
+            # Safety fallback
             Action(act_stop, 'Stop'),
         ], name='Root')
 
+        route_str = route.progress_str() if route else 'none (free mode)'
         self.get_logger().info(
             f'BT Navigator started. Grid: {self.rows}x{self.cols}. '
+            f'Route: {route_str}. '
             f'Tree: {len(self.bt_root.children)} branches.'
         )
+
+    # ── Route loading ──────────────────────────────────────────
+
+    def _load_route(self, route_file):
+        """
+        Load route YAML and SDF waypoints. Returns RouteManager or None.
+        Route file format:
+          start: sp_1
+          waypoints:
+            - sp_1
+            - wp_crossway_1
+            - __stop__
+        """
+        if not route_file:
+            return None
+
+        if not os.path.isfile(route_file):
+            self.get_logger().warn(f'Route file not found: {route_file}')
+            return None
+
+        # Read route file
+        with open(route_file) as f:
+            data = yaml.safe_load(f)
+
+        if not data or 'waypoints' not in data:
+            self.get_logger().warn(f'No waypoints in route file: {route_file}')
+            return None
+
+        waypoint_names = data['waypoints']
+        if not waypoint_names:
+            self.get_logger().warn('Empty waypoint list in route file.')
+            return None
+
+        # Parse SDF for all waypoint coordinates
+        try:
+            pkg_bringup = get_package_share_directory('hambot_bringup')
+            sdf_path = os.path.join(pkg_bringup, 'worlds', 'campus_map2.sdf')
+        except Exception:
+            self.get_logger().warn('Could not find SDF world file.')
+            return None
+
+        waypoint_poses = self._parse_sdf_waypoints(sdf_path)
+
+        if not waypoint_poses:
+            self.get_logger().warn(f'No waypoints found in SDF: {sdf_path}')
+            return None
+
+        # Log route summary
+        num_wp = sum(1 for n in waypoint_names if n != '__stop__')
+        start_name = data.get('start', waypoint_names[0] if waypoint_names else '?')
+        self.get_logger().info(f'Route loaded: {num_wp} waypoints, start={start_name}')
+
+        names_str = ' \u2192 '.join(waypoint_names)
+        self.get_logger().info(f'Route waypoints: {names_str}')
+
+        # Store waypoints in world frame directly
+        route_poses = {name: (x, y) for name, (x, y, _) in waypoint_poses.items()}
+
+        route = RouteManager(waypoint_names, route_poses, threshold=1.5)
+
+        # Store start pose for odometry→world transform
+        start_name = data.get('start', waypoint_names[0] if waypoint_names else '')
+        start_pose = waypoint_poses.get(start_name)
+        if start_pose:
+            self.start_world_x = start_pose[0]
+            self.start_world_y = start_pose[1]
+            self.start_world_yaw = start_pose[2]
+            self.get_logger().info(
+                f'Starting at {start_name} (x={self.start_world_x:.1f}, '
+                f'y={self.start_world_y:.1f}, yaw={self.start_world_yaw:.2f})'
+            )
+        else:
+            self.start_world_x = self.start_world_y = self.start_world_yaw = 0.0
+
+        cur = route.current()
+        if cur:
+            pose = route.current_pose()
+            if pose:
+                self.get_logger().info(
+                    f'NEXT WP: {cur} at ({pose[0]:.1f}, {pose[1]:.1f}) (world frame)'
+                )
+
+        return route
+
+    # ── SDF parser ─────────────────────────────────────────────
+
+    def _parse_sdf_waypoints(self, sdf_path):
+        """
+        Read <frame> elements from SDF world file.
+        Returns dict: name -> (x, y)
+        """
+        if not os.path.isfile(sdf_path):
+            self.get_logger().warn(f'SDF not found: {sdf_path}')
+            return {}
+
+        import re
+
+        with open(sdf_path) as f:
+            content = f.read()
+
+        pattern = (
+            r'<frame\s+name="([^"]+)"[^>]*>\s*'
+            r'<pose>([\d.-]+)\s+([\d.-]+)\s+[\d.-]+\s+[\d.-]+\s+[\d.-]+\s+([\d.-]+)</pose>'
+        )
+        matches = re.findall(pattern, content)
+
+        poses = {}
+        for label, x_str, y_str, yaw_str in matches:
+            poses[label] = (float(x_str), float(y_str), float(yaw_str))
+
+        if not poses:
+            self.get_logger().warn('No <frame> elements found in SDF.')
+
+        return poses
+
+    # ── Coordinate transform ──────────────────────────────────
+
+    def _odom_to_world(self, ox, oy, oyaw):
+        """
+        Convert odometry-frame pose to world frame using start pose.
+        Odometry starts at (0, 0, 0) at the robot's spawn point.
+        """
+        wx = self.start_world_x + ox * math.cos(self.start_world_yaw) - oy * math.sin(self.start_world_yaw)
+        wy = self.start_world_y + ox * math.sin(self.start_world_yaw) + oy * math.cos(self.start_world_yaw)
+        wyaw = self.start_world_yaw + oyaw
+        wyaw = math.atan2(math.sin(wyaw), math.cos(wyaw))  # wrap to [-pi, pi]
+        return wx, wy, wyaw
+        return wx, wy, wyaw
+
+    # ── Odometry callback ──────────────────────────────────────
+
+    def odom_callback(self, msg):
+        """Update robot world position from odometry."""
+        ox = msg.pose.pose.position.x
+        oy = msg.pose.pose.position.y
+        oyaw = euler_from_quaternion(msg.pose.pose.orientation)
+
+        # Transform odometry to world frame
+        self.odom_x, self.odom_y, self.odom_yaw = self._odom_to_world(ox, oy, oyaw)
+
+        self.bb['odom_x'] = self.odom_x
+        self.bb['odom_y'] = self.odom_y
+        self.bb['odom_yaw'] = self.odom_yaw
 
     # ── Projection table ────────────────────────────────────────
 

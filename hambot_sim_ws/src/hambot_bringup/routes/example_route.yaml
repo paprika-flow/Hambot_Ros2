@@ -1,0 +1,13 @@
+# Example route: south end → intersection → plaza → stop
+# Waypoint labels must match <frame> elements in campus_map2.sdf
+# __stop__ ends the mission
+
+start: sp_1
+waypoints:
+  - sp_1
+  - wp_crossway_1
+  - wp_crossway_4
+  - wp_plaza_exit_1
+  - sp_plaza
+  - wp_plaza_exit_2
+  - __stop__
