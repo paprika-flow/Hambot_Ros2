@@ -1,0 +1,388 @@
+<?xml version="1.0" ?>
+<sdf version="1.8">
+  <world name="campus_sidewalk">
+
+    <!-- ========================================== -->
+    <!-- 1. SIMULATION PHYSICS & SYSTEM PLUGINS     -->
+    <!-- ========================================== -->
+    <physics name="1ms" type="ignored">
+      <max_step_size>0.001</max_step_size>
+      <real_time_factor>1.0</real_time_factor>
+    </physics>
+
+    <plugin filename="ignition-gazebo-physics-system" name="ignition::gazebo::systems::Physics"/>
+    <plugin filename="ignition-gazebo-user-commands-system" name="ignition::gazebo::systems::UserCommands"/>
+    <plugin filename="ignition-gazebo-scene-broadcaster-system" name="ignition::gazebo::systems::SceneBroadcaster"/>
+    <plugin filename="ignition-gazebo-sensors-system" name="ignition::gazebo::systems::Sensors">
+      <render_engine>ogre2</render_engine>
+    </plugin>
+
+    <!-- ========================================== -->
+    <!-- 2. LIGHTING & SUN                          -->
+    <!-- ========================================== -->
+    <light type="directional" name="sun">
+      <cast_shadows>true</cast_shadows>
+      <pose>0 0 10 0 0 0</pose>
+      <diffuse>0.8 0.8 0.8 1</diffuse>
+      <specular>0.2 0.2 0.2 1</specular>
+      <attenuation>
+        <range>1000</range>
+        <constant>0.9</constant>
+        <linear>0.01</linear>
+        <quadratic>0.001</quadratic>
+      </attenuation>
+      <direction>-0.5 0.1 -0.9</direction>
+    </light>
+
+    <!-- ========================================== -->
+    <!-- 3. GRASS MODEL                             -->
+    <!-- ========================================== -->
+    <model name="grass_network">
+      <static>true</static>
+
+      <link name="grass_patch_0">
+        <pose>-1.5000 0.0000 0.0 0 0 0</pose>
+        <collision name="col">
+          <pose>0 0 -0.0500 0 0 0</pose>
+          <geometry>
+            <box><size>57.0000 66.0000 0.1000</size></box>
+          </geometry>
+        </collision>
+        <visual name="vis">
+          <pose>0 0 -0.0500 0 0 0</pose>
+          <geometry>
+            <box><size>57.0000 66.0000 0.1000</size></box>
+          </geometry>
+          <material>
+            <ambient>0.3 0.6 0.3 1</ambient>
+            <diffuse>0.3 0.6 0.3 1</diffuse>
+          </material>
+          <plugin filename="ignition-gazebo-label-system" name="ignition::gazebo::systems::Label">
+            <label>2</label> <!-- 2 = Grass -->
+          </plugin>
+        </visual>
+      </link>
+    </model>
+
+    <!-- ========================================== -->
+    <!-- 4. SIDEWALK NETWORK                        -->
+    <!-- ========================================== -->
+    <model name="sidewalk_network">
+      <static>true</static>
+
+      <!-- Segment 0: Length 25.00m, Width 1.20m, Height 0.05m -->
+      <link name="segment_0">
+        <pose>0.0000 -8.0000 0.0 0 0 1.5708</pose>
+        <collision name="col">
+          <pose>12.5000 0 0.0250 0 0 0</pose>
+          <geometry>
+            <box><size>25.0000 1.2000 0.0500</size></box>
+          </geometry>
+        </collision>
+        <visual name="vis">
+          <pose>12.5000 0 0.0250 0 0 0</pose>
+          <geometry>
+            <box><size>25.0000 1.2000 0.0500</size></box>
+          </geometry>
+          <material>
+            <ambient>0.65 0.65 0.65 1</ambient>
+            <diffuse>0.65 0.65 0.65 1</diffuse>
+          </material>
+          <plugin filename="ignition-gazebo-label-system" name="ignition::gazebo::systems::Label">
+            <label>1</label> <!-- 1 = Sidewalk -->
+          </plugin>
+        </visual>
+      </link>
+
+      <!-- Segment 1: Length 18.00m, Width 1.20m, Height 0.05m -->
+      <link name="segment_1">
+        <pose>-5.0000 0.0000 0.0 0 0 0.0000</pose>
+        <collision name="col">
+          <pose>9.0000 0 0.0250 0 0 0</pose>
+          <geometry>
+            <box><size>18.0000 1.2000 0.0500</size></box>
+          </geometry>
+        </collision>
+        <visual name="vis">
+          <pose>9.0000 0 0.0250 0 0 0</pose>
+          <geometry>
+            <box><size>18.0000 1.2000 0.0500</size></box>
+          </geometry>
+          <material>
+            <ambient>0.65 0.65 0.65 1</ambient>
+            <diffuse>0.65 0.65 0.65 1</diffuse>
+          </material>
+          <plugin filename="ignition-gazebo-label-system" name="ignition::gazebo::systems::Label">
+            <label>1</label> <!-- 1 = Sidewalk -->
+          </plugin>
+        </visual>
+      </link>
+
+      <!-- Segment 2: Length 10.00m, Width 1.20m, Height 0.05m -->
+      <link name="segment_2">
+        <pose>-5.0000 0.0000 0.0 0 0 -2.2143</pose>
+        <collision name="col">
+          <pose>5.0000 0 0.0250 0 0 0</pose>
+          <geometry>
+            <box><size>10.0000 1.2000 0.0500</size></box>
+          </geometry>
+        </collision>
+        <visual name="vis">
+          <pose>5.0000 0 0.0250 0 0 0</pose>
+          <geometry>
+            <box><size>10.0000 1.2000 0.0500</size></box>
+          </geometry>
+          <material>
+            <ambient>0.65 0.65 0.65 1</ambient>
+            <diffuse>0.65 0.65 0.65 1</diffuse>
+          </material>
+          <plugin filename="ignition-gazebo-label-system" name="ignition::gazebo::systems::Label">
+            <label>1</label> <!-- 1 = Sidewalk -->
+          </plugin>
+        </visual>
+      </link>
+
+      <!-- Segment 3: Length 20.00m, Width 1.20m, Height 0.05m -->
+      <link name="segment_3">
+        <pose>-5.0000 0.0000 0.0 0 0 2.2143</pose>
+        <collision name="col">
+          <pose>10.0000 0 0.0250 0 0 0</pose>
+          <geometry>
+            <box><size>20.0000 1.2000 0.0500</size></box>
+          </geometry>
+        </collision>
+        <visual name="vis">
+          <pose>10.0000 0 0.0250 0 0 0</pose>
+          <geometry>
+            <box><size>20.0000 1.2000 0.0500</size></box>
+          </geometry>
+          <material>
+            <ambient>0.65 0.65 0.65 1</ambient>
+            <diffuse>0.65 0.65 0.65 1</diffuse>
+          </material>
+          <plugin filename="ignition-gazebo-label-system" name="ignition::gazebo::systems::Label">
+            <label>1</label> <!-- 1 = Sidewalk -->
+          </plugin>
+        </visual>
+      </link>
+
+      <!-- Segment 4: Length 7.00m, Width 1.20m, Height 0.05m -->
+      <link name="segment_4">
+        <pose>-10.8576 -14.6374 0.0 0 0 1.5708</pose>
+        <collision name="col">
+          <pose>3.5000 0 0.0250 0 0 0</pose>
+          <geometry>
+            <box><size>7.0000 1.2000 0.0500</size></box>
+          </geometry>
+        </collision>
+        <visual name="vis">
+          <pose>3.5000 0 0.0250 0 0 0</pose>
+          <geometry>
+            <box><size>7.0000 1.2000 0.0500</size></box>
+          </geometry>
+          <material>
+            <ambient>0.65 0.65 0.65 1</ambient>
+            <diffuse>0.65 0.65 0.65 1</diffuse>
+          </material>
+          <plugin filename="ignition-gazebo-label-system" name="ignition::gazebo::systems::Label">
+            <label>1</label> <!-- 1 = Sidewalk -->
+          </plugin>
+        </visual>
+      </link>
+
+      <!-- Segment 5: Length 23.00m, Width 1.20m, Height 0.05m -->
+      <link name="segment_5">
+        <pose>-10.0000 7.0000 0.0 0 0 0.0000</pose>
+        <collision name="col">
+          <pose>11.5000 0 0.0250 0 0 0</pose>
+          <geometry>
+            <box><size>23.0000 1.2000 0.0500</size></box>
+          </geometry>
+        </collision>
+        <visual name="vis">
+          <pose>11.5000 0 0.0250 0 0 0</pose>
+          <geometry>
+            <box><size>23.0000 1.2000 0.0500</size></box>
+          </geometry>
+          <material>
+            <ambient>0.65 0.65 0.65 1</ambient>
+            <diffuse>0.65 0.65 0.65 1</diffuse>
+          </material>
+          <plugin filename="ignition-gazebo-label-system" name="ignition::gazebo::systems::Label">
+            <label>1</label> <!-- 1 = Sidewalk -->
+          </plugin>
+        </visual>
+      </link>
+
+      <!-- Segment 6: Length 3.00m, Width 1.20m, Height 0.05m -->
+      <link name="segment_6">
+        <pose>0.0000 -11.0000 0.0 0 0 1.5708</pose>
+        <collision name="col">
+          <pose>1.5000 0 0.0250 0 0 0</pose>
+          <geometry>
+            <box><size>3.0000 1.2000 0.0500</size></box>
+          </geometry>
+        </collision>
+        <visual name="vis">
+          <pose>1.5000 0 0.0250 0 0 0</pose>
+          <geometry>
+            <box><size>3.0000 1.2000 0.0500</size></box>
+          </geometry>
+          <material>
+            <ambient>0.65 0.65 0.65 1</ambient>
+            <diffuse>0.65 0.65 0.65 1</diffuse>
+          </material>
+          <plugin filename="ignition-gazebo-label-system" name="ignition::gazebo::systems::Label">
+            <label>1</label> <!-- 1 = Sidewalk -->
+          </plugin>
+        </visual>
+      </link>
+
+      <!-- Segment 7: Length 25.00m, Width 1.20m, Height 0.05m -->
+      <link name="segment_7">
+        <pose>13.0000 -8.0000 0.0 0 0 1.5708</pose>
+        <collision name="col">
+          <pose>12.5000 0 0.0250 0 0 0</pose>
+          <geometry>
+            <box><size>25.0000 1.2000 0.0500</size></box>
+          </geometry>
+        </collision>
+        <visual name="vis">
+          <pose>12.5000 0 0.0250 0 0 0</pose>
+          <geometry>
+            <box><size>25.0000 1.2000 0.0500</size></box>
+          </geometry>
+          <material>
+            <ambient>0.65 0.65 0.65 1</ambient>
+            <diffuse>0.65 0.65 0.65 1</diffuse>
+          </material>
+          <plugin filename="ignition-gazebo-label-system" name="ignition::gazebo::systems::Label">
+            <label>1</label> <!-- 1 = Sidewalk -->
+          </plugin>
+        </visual>
+      </link>
+
+      <!-- Segment 8: Length 16.00m, Width 8.10m, Height 0.05m -->
+      <link name="segment_8">
+        <pose>7.0000 -12.0000 0.0 0 0 0.0000</pose>
+        <collision name="col">
+          <pose>8.0000 0 0.0250 0 0 0</pose>
+          <geometry>
+            <box><size>16.0000 8.1000 0.0500</size></box>
+          </geometry>
+        </collision>
+        <visual name="vis">
+          <pose>8.0000 0 0.0250 0 0 0</pose>
+          <geometry>
+            <box><size>16.0000 8.1000 0.0500</size></box>
+          </geometry>
+          <material>
+            <ambient>0.65 0.65 0.65 1</ambient>
+            <diffuse>0.65 0.65 0.65 1</diffuse>
+          </material>
+          <plugin filename="ignition-gazebo-label-system" name="ignition::gazebo::systems::Label">
+            <label>1</label> <!-- 1 = Sidewalk -->
+          </plugin>
+        </visual>
+      </link>
+
+      <!-- Segment 9: Length 8.06m, Width 1.20m, Height 0.05m -->
+      <link name="segment_9">
+        <pose>22.0000 -9.0000 0.0 0 0 1.0517</pose>
+        <collision name="col">
+          <pose>4.0312 0 0.0250 0 0 0</pose>
+          <geometry>
+            <box><size>8.0623 1.2000 0.0500</size></box>
+          </geometry>
+        </collision>
+        <visual name="vis">
+          <pose>4.0312 0 0.0250 0 0 0</pose>
+          <geometry>
+            <box><size>8.0623 1.2000 0.0500</size></box>
+          </geometry>
+          <material>
+            <ambient>0.65 0.65 0.65 1</ambient>
+            <diffuse>0.65 0.65 0.65 1</diffuse>
+          </material>
+          <plugin filename="ignition-gazebo-label-system" name="ignition::gazebo::systems::Label">
+            <label>1</label> <!-- 1 = Sidewalk -->
+          </plugin>
+        </visual>
+      </link>
+    </model>
+
+    <!-- ========================================== -->
+    <!-- 5. PREDEFINED SPAWN POINTS                 -->
+    <!-- ========================================== -->
+    <!-- Waypoint: sp_1 -->
+    <frame name="sp_1">
+      <pose>-0.0000 -8.0000 0.1000 0.0000 0.0000 1.5708</pose>
+    </frame>
+
+    <!-- Waypoint: wp_plaza_exit_1 -->
+    <frame name="wp_plaza_exit_1">
+      <pose>13.0000 -8.0000 0.1000 0.0000 0.0000 1.5708</pose>
+    </frame>
+
+    <!-- Waypoint: wp_slant_split_1 -->
+    <frame name="wp_slant_split_1">
+      <pose>-10.1000 6.8000 0.1000 0.0000 0.0000 2.2143</pose>
+    </frame>
+
+    <!-- Waypoint: wp_crossway_1 -->
+    <frame name="wp_crossway_1">
+      <pose>0.0000 0.0000 0.1000 0.0000 0.0000 3.1416</pose>
+    </frame>
+
+    <!-- Waypoint: wp_crossway_2 -->
+    <frame name="wp_crossway_2">
+      <pose>-0.0000 7.0000 0.1000 0.0000 0.0000 3.1353</pose>
+    </frame>
+
+    <!-- Waypoint: wp_crossway_4 -->
+    <frame name="wp_crossway_4">
+      <pose>13.0000 -0.0000 0.1000 0.0000 0.0000 1.5708</pose>
+    </frame>
+
+    <!-- Waypoint: wp_end_1 -->
+    <frame name="wp_end_1">
+      <pose>-10.8576 -13.6374 0.1000 0.0000 0.0000 1.5708</pose>
+    </frame>
+
+    <!-- Waypoint: wp_y_split_1 -->
+    <frame name="wp_y_split_1">
+      <pose>-5.0000 0.0000 0.1000 0.0000 0.0000 2.2143</pose>
+    </frame>
+
+    <!-- Waypoint: sp_plaza -->
+    <frame name="sp_plaza">
+      <pose>13.0800 -15.3600 0.1000 0.0000 0.0000 1.0552</pose>
+    </frame>
+
+    <!-- Waypoint: wp_plaza_exit_2 -->
+    <frame name="wp_plaza_exit_2">
+      <pose>22.5000 -8.1300 0.1000 0.0000 0.0000 1.0517</pose>
+    </frame>
+
+    <!-- Waypoint: wp_crossway_3 -->
+    <frame name="wp_crossway_3">
+      <pose>13.0000 7.0000 0.1000 0.0000 0.0000 1.5708</pose>
+    </frame>
+
+    <!-- Waypoint: wp_end_2 -->
+    <frame name="wp_end_2">
+      <pose>-16.4000 15.2000 0.1000 0.0000 0.0000 2.2143</pose>
+    </frame>
+
+    <!-- Waypoint: wp_end_3 -->
+    <frame name="wp_end_3">
+      <pose>-0.0000 16.0000 0.1000 0.0000 0.0000 1.5708</pose>
+    </frame>
+
+    <!-- Waypoint: wp_end_4 -->
+    <frame name="wp_end_4">
+      <pose>13.0000 16.0000 0.1000 0.0000 0.0000 1.5708</pose>
+    </frame>
+
+  </world>
+</sdf>

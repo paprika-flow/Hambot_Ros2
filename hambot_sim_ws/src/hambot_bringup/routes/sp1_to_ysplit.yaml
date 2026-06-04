@@ -1,0 +1,8 @@
+# Route: sp_1 → wp_y_split_1
+# waypoints defined in campus_map2.sdf
+start: sp_1
+waypoints:
+  - wp_crossway_1    # First goal: intersection straight ahead
+  - wp_y_split_1      # Second goal: y-split after left turn (final stop)
+  - stop
+
