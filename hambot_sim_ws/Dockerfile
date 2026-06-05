@@ -27,7 +27,10 @@ RUN apt-get update && apt-get install -y \
 
 # Install packages that are used in Voronoi program
 RUN pip install scipy shapely opencv-python \
-    && pip install --upgrade scipy 
+    && pip install --upgrade scipy \
+    && pip install scikit-learn joblib 
+# Scikit-learn for the classifier
+
 # Set up the workspace directory inside the container
 WORKDIR /home/ubuntu/hambot_sim_ws
 
