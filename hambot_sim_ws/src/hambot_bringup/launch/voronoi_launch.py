@@ -9,18 +9,12 @@ from launch_ros.actions import Node
 import xacro
 
 def parse_spawn_points(world_path):
-    """
-    Read <frame> elements from SDF world file.
-    Extract name=start_position_N → x, y, z, yaw.
-    Return list of dicts sorted by N.
-    """
     if not os.path.exists(world_path):
         return []
 
     with open(world_path) as f:
         content = f.read()
 
-    # Match: <frame name="start_position_(\d+)">\n  <pose>X Y Z R P Y</pose>
     pattern = (
         r'<frame\s+name="start_position_(\d+)"[^>]*>\s*'
         r'<pose>([\d.-]+)\s+([\d.-]+)\s+([\d.-]+)\s+[\d.-]+\s+[\d.-]+\s+([\d.-]+)</pose>'
@@ -42,7 +36,6 @@ def parse_spawn_points(world_path):
 
 
 def spawn_robot_action(context):
-    """Create spawn robot node using the selected start point parsed from SDF."""
     pkg_bringup = get_package_share_directory('hambot_bringup')
     world_file = os.path.join(pkg_bringup, 'worlds', 'campus_map.sdf')
     points = parse_spawn_points(world_file)
@@ -50,9 +43,9 @@ def spawn_robot_action(context):
 
     point_str = LaunchConfiguration('start_point').perform(context)
     idx = int(point_str) if point_str.isdigit() else 1
-    idx = max(1, min(idx, num_points))  # clamp to valid range
+    idx = max(1, min(idx, num_points))  
 
-    pose = points[idx - 1]  # 1-indexed arg → 0-indexed list
+    pose = points[idx - 1]  
 
     return [
         Node(
@@ -76,11 +69,9 @@ def generate_launch_description():
     pkg_bringup = get_package_share_directory('hambot_bringup')
     pkg_ros_gz_sim = get_package_share_directory('ros_gz_sim')
     
-    # --- Count available spawn points for help text ---
     world_file = os.path.join(pkg_bringup, 'worlds', 'campus_test.sdf')
     num_points = len(parse_spawn_points(world_file))
 
-     # --- Launch args ---
     start_point_arg = DeclareLaunchArgument(
         'start_point',
         default_value='1',
@@ -90,11 +81,23 @@ def generate_launch_description():
             f'in campus_map.sdf. Default=1.'
         )
     )
-    # Process Xacro
+
+    # Added: Default model path pointing to inside the shared bringup directory
+    default_model_path = os.path.join(
+        get_package_share_directory('hambot_bringup'),
+        'models',
+        'best_voronoi_model.pkl'
+    )
+    
+    model_path_arg = DeclareLaunchArgument(
+        'model_path',
+        default_value=default_model_path,
+        description='Absolute path to the trained scikit-learn pipeline (.pkl)'
+    )
+
     xacro_file = os.path.join(pkg_description, 'urdf', 'hambot.urdf.xacro')
     robot_description_raw = xacro.process_file(xacro_file).toxml()
 
-    # Robot State Publisher
     robot_state_publisher = Node(
         package='robot_state_publisher',
         executable='robot_state_publisher',
@@ -105,9 +108,6 @@ def generate_launch_description():
         }]
     )
 
-    
-
-    # Include Gazebo Launch 
     gazebo_sim = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(pkg_ros_gz_sim, 'launch', 'gz_sim.launch.py')
@@ -115,10 +115,8 @@ def generate_launch_description():
         launch_arguments={'gz_args': f'-r {world_file}'}.items()
     )
 
-    # Spawn Robot Node
     spawn_robot = OpaqueFunction(function=spawn_robot_action)
 
-    # ROS-Gazebo Bridge
     bridge = Node(
         package='ros_gz_bridge',
         executable='parameter_bridge',
@@ -133,16 +131,12 @@ def generate_launch_description():
             '/camera/points@sensor_msgs/msg/PointCloud2[ignition.msgs.PointCloudPacked',
             '/segmentation/labels_map@sensor_msgs/msg/Image[ignition.msgs.Image',
             '/segmentation/colored_map@sensor_msgs/msg/Image[ignition.msgs.Image',
-             # --- BRIDGES TO VIEW OUTPUTS BACK IN GAZEBO ---
-            # Bridge the Sidewalk Mask from ROS 2 -> Gazebo
             '/camera/sidewalk_mask@sensor_msgs/msg/Image]ignition.msgs.Image',
-            # Bridge the Voronoi Debug Image from ROS 2 -> Gazebo
             '/voronoi/debug_image@sensor_msgs/msg/Image]ignition.msgs.Image',
         ],
         output='screen'
     )
 
-    # Custom Sidewalk Segmenter Node
     sidewalk_segmenter = Node(
         package='hambot_bringup',
         executable='sidewalk_segmenter.py',
@@ -150,7 +144,7 @@ def generate_launch_description():
         parameters=[{'use_sim_time': True}]
     )
 
-    # Voronoi Path Planner Node (Processes segmenter masks into skeleton lanes)
+    # Added: 'model_path' parameter pointing to our model configuration
     voronoi_path_planner = Node(
         package='hambot_bringup',
         executable='voronoi_path_planner.py',
@@ -158,13 +152,13 @@ def generate_launch_description():
         parameters=[{
             'use_sim_time': True,
             'input_topic': '/camera/sidewalk_mask',
-            'target_gray': 255,  # Matches binary output scale of segmenter
+            'target_gray': 255,  
             'resize_width': 960,
-            'resize_height': 720
+            'resize_height': 720,
+            'model_path': LaunchConfiguration('model_path')
         }]
     )
 
-    # Voronoi Local Navigator Node (Centering, Steering & Curb safety)
     voronoi_navigator = Node(
         package='hambot_bringup',
         executable='voronoi_navigator.py',
@@ -175,13 +169,14 @@ def generate_launch_description():
             'kp_heading': 1.5,
             'target_linear_speed': 0.22,
             'max_angular_speed': 1.0,
-            'obstacle_threshold': 0.45,  # 45cm stop distance
-            'forward_fov_deg': 40.0      # Forward wedge filter width
+            'obstacle_threshold': 0.45,  
+            'forward_fov_deg': 40.0      
         }]
     )
 
     return LaunchDescription([
         start_point_arg,
+        model_path_arg,
         robot_state_publisher,
         gazebo_sim,
         spawn_robot,

@@ -23,7 +23,7 @@ if(BUILD_TESTING)
   ament_lint_auto_find_test_dependencies()
 endif()
 
-install(DIRECTORY launch worlds routes config DESTINATION share/${PROJECT_NAME})
+install(DIRECTORY launch worlds routes config models DESTINATION share/${PROJECT_NAME})
 
 # Install Python scripts as executable nodes
 install(PROGRAMS

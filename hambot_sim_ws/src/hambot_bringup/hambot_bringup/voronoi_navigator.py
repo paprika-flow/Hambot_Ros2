@@ -32,7 +32,7 @@ class VoronoiNavigationEngine:
         pos_deadband: float = 0.03,
         side_deadband: float = 0.03,
         min_side_distance: float = 0.0,
-        deactivate_area_threshold: float = 700.0  # Threshold to deactivate the area PD loop
+        deactivate_area_threshold: float = 700.0  
     ):
         self.kp_area = kp_area
         self.kd_area = kd_area
@@ -48,17 +48,14 @@ class VoronoiNavigationEngine:
         self.min_side_distance = min_side_distance
         self.deactivate_area_threshold = deactivate_area_threshold
         
-        # Deadband Threshold Filters
         self.area_deadband = area_deadband
         self.pos_deadband = pos_deadband
         self.side_deadband = side_deadband
         
-        # State tracking for multi-derivative logic
         self.prev_error_area = 0.0
         self.prev_error_pos = 0.0
         self.prev_error_side = 0.0
         
-        # Tracks coordinate validity in previous frame to shield against derivative spikes
         self.prev_pos_valid = False
         self.prev_side_valid = False
         
@@ -75,15 +72,6 @@ class VoronoiNavigationEngine:
         scan_min_dist: float, 
         obstacle_threshold: float
     ) -> tuple:
-        """
-        Computes velocities utilizing independent proportional and derivative control loops
-        for area imbalance, path center offsets, and entry mouth alignment.
-        """
-        # 1. Emergency Obstacle Halt
-        # if scan_min_dist < obstacle_threshold:
-        #     self.smoothed_angular_vel = 0.0
-        #     return 0.0, 0.0
-
         current_time = time.time()
         
         if self.prev_time is None:
@@ -93,21 +81,17 @@ class VoronoiNavigationEngine:
             if dt <= 0:
                 dt = 0.001
 
-        # --- CONDITIONAL AREA DEACTIVATION ---
-        # If the sidewalk entry width falls below 700, deactivate the side vector area loop.
-        # This keeps the side vector midpoint tracking active, while discarding area imbalance noise.
         if side_dist is not None and side_dist < self.deactivate_area_threshold:
             area_left = 0.0
             area_right = 0.0
 
-        # 2. Area Proportional Term with Deadband
+        # Proportional Loop Calculations
         raw_diff = area_left - area_right
         error_area = raw_diff / self.area_normalization_scale
         if abs(error_area) < self.area_deadband:
             error_area = 0.0
         p_term_area = self.kp_area * error_area
         
-        # 3. Path Position Proportional Term with Deadband
         error_pos = 0.0
         pos_valid = (path_x is not None)
         if pos_valid:
@@ -117,22 +101,18 @@ class VoronoiNavigationEngine:
                 error_pos = 0.0
         p_term_pos = self.kp_pos * error_pos
         
-        # 4. Side Vector Distance Proportional Term with Deadband & Minimum Spacing Discard
         error_side = 0.0
-        # If spacing is below min_side_distance (480.0), completely stop considering side vector positioning
-        side_valid = (side_mid_x is not None and side_dist is not None and side_dist == 0.0 and side_dist >= self.min_side_distance)
+        side_valid = (side_mid_x is not None and side_dist is not None and side_dist >= self.min_side_distance)
         if side_valid:
             center_x = self.image_width / 2.0
-            # Scale-invariant offset based on actual width between points:
             error_side = (2.0 * (center_x - side_mid_x)) / side_dist
             if abs(error_side) < self.side_deadband:
                 error_side = 0.0
         p_term_side = self.kp_side * error_side
         
-        # Combined Proportional Command
         p_term = p_term_area + p_term_pos + p_term_side
         
-        # 5. Independent Derivative Calculations (Transition-Safe)
+        # Derivative Loop Calculations
         d_term_area = 0.0
         if dt > 0:
             raw_derivative_area = (error_area - self.prev_error_area) / dt
@@ -148,20 +128,14 @@ class VoronoiNavigationEngine:
             raw_derivative_side = (error_side - self.prev_error_side) / dt
             d_term_side = self.kd_side * raw_derivative_side
 
-        # Combined Derivative Command
         d_term = d_term_area + d_term_pos + d_term_side
         
-        # Combined raw angular command
         raw_angular_vel = p_term + d_term
-        
-        # Clamp raw steering command
         raw_angular_vel = max(-self.max_angular_speed, min(self.max_angular_speed, raw_angular_vel))
         
-        # 6. Temporal Low-Pass Filtering (EMA)
         self.smoothed_angular_vel = (self.smoothing_factor * raw_angular_vel) + \
                                     ((1.0 - self.smoothing_factor) * self.smoothed_angular_vel)
                                     
-        # State updates for tracking next frames
         self.prev_error_area = error_area
         self.prev_error_pos = error_pos
         self.prev_error_side = error_side
@@ -169,7 +143,6 @@ class VoronoiNavigationEngine:
         self.prev_side_valid = side_valid
         self.prev_time = current_time
         
-        # Adaptive Linear Velocity
         norm_correction = abs(raw_angular_vel) / self.max_angular_speed
         speed_multiplier = max(0.3, 1.0 - norm_correction * 0.7)
         linear_vel = self.target_linear_speed * speed_multiplier
@@ -184,7 +157,6 @@ class VoronoiNavigator(Node):
     def __init__(self):
         super().__init__('voronoi_navigator')
         
-        # Declare configurable parameters
         self.declare_parameter('kp_area', 0.5)
         self.declare_parameter('kd_area', 0.125)
         self.declare_parameter('kp_pos', 0.2)
@@ -201,15 +173,12 @@ class VoronoiNavigator(Node):
         self.declare_parameter('image_width', 960.0)
         self.declare_parameter('use_path_position', True)
         self.declare_parameter('use_side_position', True)
-        self.declare_parameter('min_side_distance', 0.0)           # Threshold for vector convergence
-        self.declare_parameter('deactivate_area_threshold', 750.0)   # Threshold to disable the visual area PD
-        
-        # Deadbands (Noise Filters)
+        self.declare_parameter('min_side_distance', 0.0)           
+        self.declare_parameter('deactivate_area_threshold', 750.0)   
         self.declare_parameter('area_deadband', 0.015)
         self.declare_parameter('pos_deadband', 0.03)
         self.declare_parameter('side_deadband', 0.03)
 
-        # Instantiate control engine
         self.engine = VoronoiNavigationEngine(
             kp_area=self.get_parameter('kp_area').value,
             kd_area=self.get_parameter('kd_area').value,
@@ -238,16 +207,14 @@ class VoronoiNavigator(Node):
         self.lock = threading.Lock()
         self.latest_scan_min = float('inf')
         
-        # Placeholders for tracking inputs
         self.latest_area_left = 0.0
         self.latest_area_right = 0.0
         self.latest_path_x = None
         self.latest_side_mid_x = None
         self.latest_side_dist = None
+        self.latest_split_prob = -1.0
         
         callback_group = ReentrantCallbackGroup()
-        
-        # Publishers & Subscribers
         self.cmd_pub = self.create_publisher(Twist, '/cmd_vel', 10)
         
         self.latest_only_qos = QoSProfile(
@@ -304,6 +271,14 @@ class VoronoiNavigator(Node):
             callback_group=callback_group
         )
         
+        self.split_prob_sub = self.create_subscription(
+            Float32,
+            '/voronoi/split_probability',
+            self.split_prob_callback,
+            self.latest_only_qos,
+            callback_group=callback_group
+        )
+        
         self.scan_sub = self.create_subscription(
             LaserScan,
             '/scan',
@@ -312,14 +287,7 @@ class VoronoiNavigator(Node):
             callback_group=callback_group
         )
         
-        self.get_logger().info(
-            f"Voronoi Blended PID Navigator initialized (Scale-Invariant Side Offset active).\n"
-            f"Gains: area_PD={self.engine.kp_area}/{self.engine.kd_area}, "
-            f"pos_PD={self.engine.kp_pos}/{self.engine.kd_pos}, "
-            f"side_PD={self.engine.kp_side}/{self.engine.kd_side}\n"
-            f"Deadbands: area={self.engine.area_deadband}, path_pos={self.engine.pos_deadband}, side_pos={self.engine.side_deadband}\n"
-            f"Thresholds: deact_area={self.engine.deactivate_area_threshold}, min_spacing={self.engine.min_side_distance}"
-        )
+        self.get_logger().info("Voronoi Blended PID Navigator with Live Split Diagnostics initialized.")
 
     def scan_callback(self, msg: LaserScan):
         angle_min = msg.angle_min
@@ -369,6 +337,10 @@ class VoronoiNavigator(Node):
             else:
                 self.latest_side_dist = None
 
+    def split_prob_callback(self, msg: Float32):
+        with self.lock:
+            self.latest_split_prob = msg.data
+
     def area_callback(self, msg: Float32):
         with self.lock:
             scan_dist = self.latest_scan_min
@@ -377,6 +349,7 @@ class VoronoiNavigator(Node):
             path_x = self.latest_path_x if self.use_path_position else None
             side_mid_x = self.latest_side_mid_x if self.use_side_position else None
             side_dist = self.latest_side_dist if self.use_side_position else None
+            split_prob = self.latest_split_prob
             
         if self.invert_area_sign:
             area_left, area_right = area_right, area_left
@@ -395,14 +368,20 @@ class VoronoiNavigator(Node):
         side_str = f"SideX: {side_mid_x:5.1f}" if side_mid_x is not None else "SideX: None"
         dist_str = f"SideDist: {side_dist:5.1f}" if side_dist is not None else "SideDist: None"
         
-        # Determine tracking statuses for diagnostic terminal logs
         area_active = "ACTIVE" if (side_dist is None or side_dist >= self.engine.deactivate_area_threshold) else "INACTIVE"
         side_active = "ACTIVE" if (side_mid_x is not None and side_dist is not None and side_dist >= self.engine.min_side_distance) else "INACTIVE"
+        
+        # Changed: Print N/A when the probability is negative
+        split_prob_str = (
+            f"SPLIT PROBABILITY: {split_prob * 100.0:5.1f}%" 
+            if split_prob >= 0.0 
+            else "SPLIT PROBABILITY: N/A"
+        )
         
         self.get_logger().info(
             f"Areas -> L: {area_left:6.1f} | R: {area_right:6.1f} (Area: {area_active}) | "
             f"RawDiff: {raw_diff:6.1f} | {path_str} | {side_str} ({dist_str}, Side: {side_active}) | "
-            f"Cmd Angular: {angular_vel:6.3f} rad/s",
+            f"{split_prob_str} | Cmd Angular: {angular_vel:6.3f} rad/s",
             throttle_duration_sec=0.2
         )
         

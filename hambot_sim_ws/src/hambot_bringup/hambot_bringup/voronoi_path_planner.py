@@ -10,6 +10,8 @@ from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
 import cv2
 import numpy as np
 import math
+import os
+import joblib
 from collections import defaultdict
 from scipy.spatial import Voronoi
 from shapely.geometry import Polygon
@@ -65,11 +67,9 @@ def is_line_on_sidewalk(p0, p1, binary_mask, h):
     Checks if a line between two Cartesian points crosses any non-sidewalk pixel (0).
     Maps Cartesian coordinates (flipped y) back to image array indices.
     """
-    # Map from Cartesian setup back to image space array indices
     x0, y0 = int(round(p0[0])), int(round(h - p0[1]))
     x1, y1 = int(round(p1[0])), int(round(h - p1[1]))
     
-    # Generate point coordinates along the segment line cleanly
     num_samples = max(abs(x1 - x0), abs(y1 - y0), 2) * 2
         
     x_coords = np.linspace(x0, x1, num_samples)
@@ -79,7 +79,6 @@ def is_line_on_sidewalk(p0, p1, binary_mask, h):
     
     for x, y in zip(x_coords, y_coords):
         col, row = int(round(x)), int(round(y))
-        # Check boundary array layout constraints
         if 0 <= col < mask_w and 0 <= row < mask_h:
             if binary_mask[row, col] == 0:  # Touches non-sidewalk pixel
                 return False
@@ -116,12 +115,11 @@ def get_vectors_area(line, lines, dict_ridge_points, vor, side_vectors, right, b
             if rv == v1:
                 continue
                 
-            # SAFETY CONDITION: REJECT CROSSOVER TO OPPOSITE HALF OF THE IMAGE
             image_center = range_val / 2.0
             if right and rv_x < image_center:
-                continue  # Reject left-half points for right side vector
+                continue  
             if not right and rv_x > image_center:
-                continue  # Reject right-half points for left side vector
+                continue  
                 
             if right and rv_x < v0_x:
                 continue
@@ -154,7 +152,6 @@ def get_vectors_area(line, lines, dict_ridge_points, vor, side_vectors, right, b
                 else:
                     continue
 
-            # VALIDATION STEP: Verify the linking line between the two unshared tips is entirely over sidewalk pixels
             if not is_line_on_sidewalk(vor.vertices[resolved_rv], vor.vertices[v1], binary_mask, h):
                 continue
 
@@ -185,7 +182,6 @@ def get_vectors_area(line, lines, dict_ridge_points, vor, side_vectors, right, b
             if rv == v0:
                 continue
                 
-            # SAFETY CONDITION: REJECT CROSSOVER TO OPPOSITE HALF OF THE IMAGE
             image_center = range_val / 2.0
             if right and rv_x < image_center:
                 continue
@@ -223,7 +219,6 @@ def get_vectors_area(line, lines, dict_ridge_points, vor, side_vectors, right, b
                 else:
                     continue
 
-            # VALIDATION STEP: Verify the linking line between the two unshared tips is entirely over sidewalk pixels
             if not is_line_on_sidewalk(vor.vertices[resolved_rv], vor.vertices[v0], binary_mask, h):
                 continue
 
@@ -481,7 +476,6 @@ def interpreting_skeletons(skeleton_lines, dict_ridge_points, vor, straight_path
     if left_lowest_line is None or right_lowest_line is None:
         return [], 0.0, 0.0, None, [], 0.0, 0.0, None, None
 
-    # Track the lowest points of left and right side vectors (closer to robot)
     pt0_l = vor.vertices[left_lowest_line[0]]
     pt1_l = vor.vertices[left_lowest_line[1]]
     left_lower_pt = pt0_l if pt0_l[1] < pt1_l[1] else pt1_l
@@ -522,6 +516,94 @@ def interpreting_skeletons(skeleton_lines, dict_ridge_points, vor, straight_path
 
 
 # =====================================================================
+# VORONOI CLASSIFIER FEATURE EXTRACTION
+# =====================================================================
+
+def extract_feature_vector(chars_paths, chars_side_vectors, dens_l, dens_r, dens_c,
+                           img_w=960, img_h=720, eps=1e-6):
+    """
+    Computes identical feature structure generated during offline dataset training.
+    """
+    features = []
+
+    # 1. Basic Counts
+    num_paths = len(chars_paths)
+    num_side = len(chars_side_vectors)
+    features.append(float(num_paths))
+    features.append(float(num_side))
+
+    if num_paths > 0:
+        # Unpack: (distance, angle, midpoint_x, v0, v1)
+        dists = np.array([p[0] for p in chars_paths], dtype=np.float64)
+        angs  = np.array([p[1] for p in chars_paths], dtype=np.float64)
+        midx  = np.array([p[2] for p in chars_paths], dtype=np.float64)
+        
+        dl_only = np.array(dens_l, dtype=np.float64)
+        dr_only = np.array(dens_r, dtype=np.float64)
+        dc_only = np.array(dens_c, dtype=np.float64)
+
+        # Normalize distance and X-position
+        dist_n = dists / float(img_h)
+        x_n = (midx - img_w/2) / (img_w/2)  # -1 (left) to 1 (right)
+
+        # 1. Path Length Stats
+        features.extend([
+            float(np.mean(dist_n)),
+            float(np.max(dist_n)),
+            float(np.std(dist_n)) if num_paths > 1 else 0.0
+        ])
+
+        # 2. Horizontal Distribution
+        features.extend([
+            float(np.mean(x_n)),
+            float(np.std(x_n)) if num_paths > 1 else 0.0,
+            float(np.max(x_n) - np.min(x_n)) if num_paths > 1 else 0.0
+        ])
+
+        # 3. Angular Topology (Circular representation)
+        ang_rad = np.deg2rad(angs)
+        sin_mean = np.mean(np.sin(ang_rad))
+        cos_mean = np.mean(np.cos(ang_rad))
+        avg_ang = np.rad2deg(np.arctan2(sin_mean, cos_mean))
+        
+        features.append(float(avg_ang))
+        features.append(float(np.std(angs)) if num_paths > 1 else 0.0)
+
+        # 4. Density/Obstacle Metrics (Set to default 0.0 matching offline fallback)
+        features.extend([
+            float(np.mean(dl_only)) if len(dl_only) > 0 else 0.0,
+            float(np.mean(dr_only)) if len(dr_only) > 0 else 0.0,
+            float(np.mean(dc_only)) if len(dc_only) > 0 else 0.0
+        ])
+
+        # 5. Branching Symmetry (Top 2 paths)
+        if num_paths >= 2:
+            sorted_indices = np.argsort(dists)[::-1]
+            d1, d2 = dist_n[sorted_indices[0]], dist_n[sorted_indices[1]]
+            x1, x2 = x_n[sorted_indices[0]], x_n[sorted_indices[1]]
+            a1, a2 = angs[sorted_indices[0]], angs[sorted_indices[1]]
+
+            features.append(float(abs(d1 - d2) / (d1 + d2 + eps)))
+            ang_diff = abs(a1 - a2) % 360.0
+            features.append(float(min(ang_diff, 360.0 - ang_diff)))
+            features.append(float(abs(x1 - x2)))
+        else:
+            features.extend([0.0, 0.0, 0.0])
+    else:
+        features.extend([0.0] * 14)
+
+    # 6. Side Vector Summary
+    if num_side > 0:
+        side_ds = np.array([s[0] for s in chars_side_vectors], dtype=np.float64)
+        features.append(float(np.mean(side_ds) / img_h))
+        features.append(float(np.max(side_ds) / img_h))
+    else:
+        features.extend([0.0, 0.0])
+
+    return np.asarray(features, dtype=np.float32)
+
+
+# =====================================================================
 # ROS 2 NODE INTERFACE
 # =====================================================================
 
@@ -534,12 +616,28 @@ class VoronoiPathPlanner(Node):
         self.declare_parameter('target_gray', 255)
         self.declare_parameter('resize_width', 960)
         self.declare_parameter('resize_height', 720)
+        self.declare_parameter('model_path', '')  # Loaded via parameter
         
         self.input_topic = self.get_parameter('input_topic').get_parameter_value().string_value
         self.target_gray = self.get_parameter('target_gray').get_parameter_value().integer_value
         self.resize_width = self.get_parameter('resize_width').get_parameter_value().integer_value
         self.resize_height = self.get_parameter('resize_height').get_parameter_value().integer_value
+        self.model_path = self.get_parameter('model_path').get_parameter_value().string_value
         
+        # Classifier Setup
+        self.classifier = None
+        if self.model_path:
+            if os.path.exists(self.model_path):
+                try:
+                    self.classifier = joblib.load(self.model_path)
+                    self.get_logger().info(f"Loaded Voronoi Split Classifier successfully: {self.model_path}")
+                except Exception as e:
+                    self.get_logger().error(f"Failed to load SVM model file from: {self.model_path}. Error: {e}")
+            else:
+                self.get_logger().error(f"Supplied model path does not exist: {self.model_path}")
+        else:
+            self.get_logger().warn("No 'model_path' parameter provided. Split probability outputs are deactivated.")
+
         # State tracking
         self.prev_best_path_coords = None  
         
@@ -554,6 +652,9 @@ class VoronoiPathPlanner(Node):
         # Side-vector Publishers (midpoint + distance)
         self.side_mid_pub = self.create_publisher(Float32, '/voronoi/side_vector_mid_x', 10)
         self.side_dist_pub = self.create_publisher(Float32, '/voronoi/side_vector_distance', 10)
+        
+        # Split Probability Publisher
+        self.split_prob_pub = self.create_publisher(Float32, '/voronoi/split_probability', 10)
         
         # Subscriber (Latest-only QoS pattern to completely avoid latency backlogs)
         qos_profile = QoSProfile(
@@ -598,6 +699,12 @@ class VoronoiPathPlanner(Node):
              # 4. Extract external contours for boundaries
             contours, _ = cv2.findContours(binary_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
             if not contours:
+                self.publish_blank_debug_image(msg.header)
+                self.publish_empty_pose_array(msg.header)
+                # Publish 0.0 split probability on tracking loss
+                prob_msg = Float32()
+                prob_msg.data = 0.0
+                self.split_prob_pub.publish(prob_msg)
                 return
 
             contour = max(contours, key=cv2.contourArea)
@@ -637,7 +744,10 @@ class VoronoiPathPlanner(Node):
                 # Publish physical coordinates directly
                 self.publish_best_path_pose_array(msg.header, p0_cart, p1_cart)
 
-            # 5. Publish Steering Control Parameters
+            # 5. Live Split Classification Inference
+            self.compute_and_publish_split_probability(vor, paths, side_vectors, w, h)
+
+            # 6. Publish Steering Control Parameters
             angle_msg = Float32()
             angle_msg.data = float(best_angle)
             self.angle_pub.publish(angle_msg)
@@ -667,7 +777,7 @@ class VoronoiPathPlanner(Node):
             self.side_mid_pub.publish(side_mid_msg)
             self.side_dist_pub.publish(side_dist_msg)
 
-            # 6. Build and publish visual debug mapping (scaled to 0.5x of the target resize dimensions)
+            # 7. Build and publish visual debug mapping (scaled to 0.5x of the target resize dimensions)
             dbg_w = int(self.resize_width * 0.5)
             dbg_h = int(self.resize_height * 0.5)
             debug_bgr = self.generate_debug_image(
@@ -677,12 +787,59 @@ class VoronoiPathPlanner(Node):
 
         except Exception as e:
             self.get_logger().error(f"Voronoi pipeline error: {str(e)}")
+            # Fallback split publishing on error
+            prob_msg = Float32()
+            prob_msg.data = 0.0
+            self.split_prob_pub.publish(prob_msg)
+
+    def compute_and_publish_split_probability(self, vor, paths, side_vectors, w, h):
+        prob_msg = Float32()
+        
+        # Changed: Publish -1.0 to signal the model did not load
+        if self.classifier is None:
+            prob_msg.data = -1.0
+            self.split_prob_pub.publish(prob_msg)
+            return
+
+        try:
+            # Reconstruct topological properties from paths list
+            chars_paths = []
+            for v0, v1 in paths:
+                pt0 = vor.vertices[v0]
+                pt1 = vor.vertices[v1]
+                dist = get_distance(pt0, pt1)
+                ang = get_angle(pt0[0], pt0[1], pt1[0], pt1[1])
+                mid_x = (pt0[0] + pt1[0]) / 2.0
+                chars_paths.append((dist, ang, mid_x, v0, v1))
+
+            # Reconstruct topological properties from side vectors list
+            chars_side = []
+            for v0, v1 in side_vectors:
+                pt0 = vor.vertices[v0]
+                pt1 = vor.vertices[v1]
+                dist = get_distance(pt0, pt1)
+                ang = get_angle(pt0[0], pt0[1], pt1[0], pt1[1])
+                mid_x = (pt0[0] + pt1[0]) / 2.0
+                chars_side.append((dist, ang, mid_x, v0, v1))
+
+            # Calculate the standard feature vector mapping
+            features = extract_feature_vector(chars_paths, chars_side, [], [], [], img_w=w, img_h=h)
+            
+            # Predict probability using scikit-learn Pipeline
+            features_reshaped = features.reshape(1, -1)
+            probs = self.classifier.predict_proba(features_reshaped)[0]
+            
+            prob_msg.data = float(probs[1])
+        except Exception as e:
+            self.get_logger().error(f"Feature extraction or classification failure: {e}")
+            prob_msg.data = -1.0 # Signal prediction failure
+
+        self.split_prob_pub.publish(prob_msg)
 
     def generate_debug_image(self, shape, boundary_points, skeleton, paths, side_vectors, best_path, vor):
         h, w = shape
         canvas = np.zeros((h, w, 3), dtype=np.uint8)
 
-        # Scale coordinates from processing space to target debug display space
         scale_x = w / float(self.resize_width)
         scale_y = h / float(self.resize_height)
 
