@@ -2,6 +2,7 @@
 import math
 import time
 import threading
+from collections import deque
 from rclpy.node import Node
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
@@ -61,6 +62,9 @@ class VoronoiNavigationEngine:
         
         self.prev_time = None
         self.smoothed_angular_vel = 0.0
+        
+        # State tracking flag for dynamic safety override
+        self.opposite_target_active = False
 
     def compute_controls(
         self, 
@@ -70,7 +74,11 @@ class VoronoiNavigationEngine:
         side_mid_x: float,
         side_dist: float,
         scan_min_dist: float, 
-        obstacle_threshold: float
+        obstacle_threshold: float,
+        handling_split: bool = False,
+        split_direction: str = 'straight',
+        split_turn_kp: float = 0.15,
+        split_turn_kd: float = 0.03
     ) -> tuple:
         current_time = time.time()
         
@@ -81,54 +89,129 @@ class VoronoiNavigationEngine:
             if dt <= 0:
                 dt = 0.001
 
-        if side_dist is not None and side_dist < self.deactivate_area_threshold:
-            area_left = 0.0
-            area_right = 0.0
-
-        # Proportional Loop Calculations
-        raw_diff = area_left - area_right
-        error_area = raw_diff / self.area_normalization_scale
-        if abs(error_area) < self.area_deadband:
-            error_area = 0.0
-        p_term_area = self.kp_area * error_area
-        
-        error_pos = 0.0
+        # Checked against zero division using 1e-5 floor guard
         pos_valid = (path_x is not None)
-        if pos_valid:
+        side_valid = (side_mid_x is not None and side_dist is not None and side_dist > max(self.min_side_distance, 1e-5))
+
+        self.opposite_target_active = False
+
+        if handling_split:
+            # =========================================================
+            # SPLIT CONTROL LAWS (NESTED BY SELECTED DIRECTION)
+            # =========================================================
+            error_area = 0.0
+            error_side = 0.0
+            p_term_area = 0.0
+            p_term_side = 0.0
+            
+            error_pos = 0.0
             center_x = self.image_width / 2.0
-            error_pos = (center_x - path_x) / center_x
+            
+            if split_direction == 'straight':
+                if pos_valid:
+                    error_pos = (center_x - path_x) / center_x
+                
+                # Active centerline constants for straight tracking
+                kp_pos_active = max(self.kp_pos * 3.0, 0.6)
+                kd_pos_active = max(self.kd_pos * 2.0, 0.1)
+                    
+            elif split_direction == 'left':
+                # Check if left side-vector has hit boundaries or is zero (off-sidewalk safety check)
+                left_off_sidewalk = False
+                if side_valid:
+                    left_x = side_mid_x - (side_dist / 2.0)
+                    if left_x <= 10.0 or area_left <= 0.01:
+                        left_off_sidewalk = True
+                
+                if left_off_sidewalk:
+                    # Safety Override: Target the opposite (right) vector to recover center
+                    self.opposite_target_active = True
+                    if side_valid:
+                        right_x = side_mid_x + (side_dist / 2.0)
+                        error_pos = (center_x - right_x) / center_x
+                else:
+                    if side_valid:
+                        error_pos = (center_x - left_x) / center_x
+                
+                kp_pos_active = split_turn_kp
+                kd_pos_active = split_turn_kd
+                    
+            elif split_direction == 'right':
+                # Check if right side-vector has hit boundaries or is zero (off-sidewalk safety check)
+                right_off_sidewalk = False
+                if side_valid:
+                    right_x = side_mid_x + (side_dist / 2.0)
+                    if right_x >= (self.image_width - 10.0) or area_right <= 0.01:
+                        right_off_sidewalk = True
+                
+                if right_off_sidewalk:
+                    # Safety Override: Target the opposite (left) vector to recover center
+                    self.opposite_target_active = True
+                    if side_valid:
+                        left_x = side_mid_x - (side_dist / 2.0)
+                        error_pos = (center_x - left_x) / center_x
+                else:
+                    if side_valid:
+                        error_pos = (center_x - right_x) / center_x
+                
+                kp_pos_active = split_turn_kp
+                kd_pos_active = split_turn_kd
+
             if abs(error_pos) < self.pos_deadband:
                 error_pos = 0.0
-        p_term_pos = self.kp_pos * error_pos
-        
-        error_side = 0.0
-        side_valid = (side_mid_x is not None and side_dist is not None and side_dist >= self.min_side_distance)
-        if side_valid:
-            center_x = self.image_width / 2.0
-            error_side = (2.0 * (center_x - side_mid_x)) / side_dist
-            if abs(error_side) < self.side_deadband:
-                error_side = 0.0
-        p_term_side = self.kp_side * error_side
-        
-        p_term = p_term_area + p_term_pos + p_term_side
-        
-        # Derivative Loop Calculations
-        d_term_area = 0.0
-        if dt > 0:
-            raw_derivative_area = (error_area - self.prev_error_area) / dt
-            d_term_area = self.kd_area * raw_derivative_area
+                
+            p_term_pos = kp_pos_active * error_pos
+            p_term = p_term_pos
+            
+            d_term_pos = 0.0
+            if dt > 0 and pos_valid and self.prev_pos_valid:
+                raw_derivative_pos = (error_pos - self.prev_error_pos) / dt
+                d_term_pos = kd_pos_active * raw_derivative_pos
+                
+            d_term = d_term_pos
 
-        d_term_pos = 0.0
-        if dt > 0 and pos_valid and self.prev_pos_valid:
-            raw_derivative_pos = (error_pos - self.prev_error_pos) / dt
-            d_term_pos = self.kd_pos * raw_derivative_pos
+        else:
+            # =========================================================
+            # NORMAL NAVIGATION LAW: BLENDED PD LOOPS
+            # =========================================================
+            if side_dist is not None and side_dist < self.deactivate_area_threshold:
+                area_left = 0.0
+                area_right = 0.0
 
-        d_term_side = 0.0
-        if dt > 0 and side_valid and self.prev_side_valid:
-            raw_derivative_side = (error_side - self.prev_error_side) / dt
-            d_term_side = self.kd_side * raw_derivative_side
+            raw_diff = area_left - area_right
+            error_area = raw_diff / self.area_normalization_scale
+            if abs(error_area) < self.area_deadband:
+                error_area = 0.0
+            p_term_area = self.kp_area * error_area
+            
+            # Forced to 0.0 during normal navigation and early split ahead phases
+            p_term_pos = 0.0
+            error_pos = 0.0
+            
+            error_side = 0.0
+            if side_valid:
+                center_x = self.image_width / 2.0
+                error_side = (2.0 * (center_x - side_mid_x)) / side_dist
+                if abs(error_side) < self.side_deadband:
+                    error_side = 0.0
+            p_term_side = self.kp_side * error_side
+            
+            p_term = p_term_area + p_term_pos + p_term_side
+            
+            d_term_area = 0.0
+            if dt > 0:
+                raw_derivative_area = (error_area - self.prev_error_area) / dt
+                d_term_area = self.kd_area * raw_derivative_area
 
-        d_term = d_term_area + d_term_pos + d_term_side
+            # Forced to 0.0 during normal navigation and early split ahead phases
+            d_term_pos = 0.0
+
+            d_term_side = 0.0
+            if dt > 0 and side_valid and self.prev_side_valid:
+                raw_derivative_side = (error_side - self.prev_error_side) / dt
+                d_term_side = self.kd_side * raw_derivative_side
+
+            d_term = d_term_area + d_term_pos + d_term_side
         
         raw_angular_vel = p_term + d_term
         raw_angular_vel = max(-self.max_angular_speed, min(self.max_angular_speed, raw_angular_vel))
@@ -145,7 +228,9 @@ class VoronoiNavigationEngine:
         
         norm_correction = abs(raw_angular_vel) / self.max_angular_speed
         speed_multiplier = max(0.3, 1.0 - norm_correction * 0.7)
-        linear_vel = self.target_linear_speed * speed_multiplier
+        
+        base_speed = self.target_linear_speed * 0.85 if handling_split else self.target_linear_speed
+        linear_vel = base_speed * speed_multiplier
         
         return linear_vel, self.smoothed_angular_vel
 
@@ -154,15 +239,20 @@ class VoronoiNavigationEngine:
 # ROS 2 WRAPPER NODE
 # =====================================================================
 class VoronoiNavigator(Node):
+    # State Machine Constants
+    STATE_NORMAL = 0
+    STATE_SPLIT_AHEAD = 1
+    STATE_HANDLING_SPLIT = 2
+
     def __init__(self):
         super().__init__('voronoi_navigator')
         
-        self.declare_parameter('kp_area', 0.5)
-        self.declare_parameter('kd_area', 0.125)
+        self.declare_parameter('kp_area', 0.35)
+        self.declare_parameter('kd_area', 0.075)
         self.declare_parameter('kp_pos', 0.2)
         self.declare_parameter('kd_pos', 0.05)
-        self.declare_parameter('kp_side', 0.5)
-        self.declare_parameter('kd_side', 0.1)
+        self.declare_parameter('kp_side', 0.35)
+        self.declare_parameter('kd_side', 0.05)
         self.declare_parameter('target_linear_speed', 0.16)
         self.declare_parameter('max_angular_speed', 0.2)
         self.declare_parameter('smoothing_factor', 0.15)
@@ -178,6 +268,33 @@ class VoronoiNavigator(Node):
         self.declare_parameter('area_deadband', 0.015)
         self.declare_parameter('pos_deadband', 0.03)
         self.declare_parameter('side_deadband', 0.03)
+
+        # Hysteresis Split Parameters
+        self.declare_parameter('split_threshold', 0.75)             
+        self.declare_parameter('split_exit_prob_threshold', 0.8)    
+        self.declare_parameter('split_exit_area_threshold', 2000.0)  
+        
+        self.declare_parameter('split_direction', 'straight')       
+        
+        # Split Turn Tuning Parameters
+        self.declare_parameter('split_turn_kp', 0.22)                       
+        self.declare_parameter('split_turn_kd', 0.1)                       
+        self.declare_parameter('consecutive_frames_threshold', 4)       
+        
+        self.split_threshold = self.get_parameter('split_threshold').value
+        self.split_exit_prob_threshold = self.get_parameter('split_exit_prob_threshold').value
+        self.split_exit_area_threshold = self.get_parameter('split_exit_area_threshold').value
+        self.consecutive_frames_threshold = self.get_parameter('consecutive_frames_threshold').value
+        self.consecutive_splits_length = 15
+
+        self.split_history = deque(maxlen=self.consecutive_splits_length)
+        
+        # State machine tracking variables
+        self.nav_state = self.STATE_NORMAL
+        self.large_area_consecutive_count = 0
+        self.clear_area_consecutive_count = 0
+        self.split_handling_start_time = 0.0
+        self._was_handling_split = False
 
         self.engine = VoronoiNavigationEngine(
             kp_area=self.get_parameter('kp_area').value,
@@ -287,7 +404,7 @@ class VoronoiNavigator(Node):
             callback_group=callback_group
         )
         
-        self.get_logger().info("Voronoi Blended PID Navigator with Live Split Diagnostics initialized.")
+        self.get_logger().info("Voronoi Blended PID Navigator with Hysteresis, Safety Guardrail, & Arc Turning initialized.")
 
     def scan_callback(self, msg: LaserScan):
         angle_min = msg.angle_min
@@ -340,8 +457,18 @@ class VoronoiNavigator(Node):
     def split_prob_callback(self, msg: Float32):
         with self.lock:
             self.latest_split_prob = msg.data
+            if msg.data >= 0.0:
+                self.split_history.append(msg.data)
 
     def area_callback(self, msg: Float32):
+        split_direction = self.get_parameter('split_direction').get_parameter_value().string_value
+        if split_direction not in ['straight', 'left', 'right']:
+            split_direction = 'straight'
+
+        split_turn_kp = self.get_parameter('split_turn_kp').get_parameter_value().double_value
+        split_turn_kd = self.get_parameter('split_turn_kd').get_parameter_value().double_value
+        consecutive_frames_threshold = self.get_parameter('consecutive_frames_threshold').get_parameter_value().integer_value
+
         with self.lock:
             scan_dist = self.latest_scan_min
             area_left = self.latest_area_left
@@ -351,6 +478,65 @@ class VoronoiNavigator(Node):
             side_dist = self.latest_side_dist if self.use_side_position else None
             split_prob = self.latest_split_prob
             
+            history_length = len(self.split_history)
+            if history_length >= self.consecutive_splits_length:
+                split_avg = sum(self.split_history) / float(self.consecutive_splits_length)
+            else:
+                split_avg = 0.0
+            
+        # Determine if either side-vector area exceeds the trigger limit
+        any_area_big = (area_left >= self.split_exit_area_threshold or area_right >= self.split_exit_area_threshold)
+        
+        # Debounce logic for entry and exit transitions using a single frame threshold
+        if any_area_big:
+            self.large_area_consecutive_count += 1
+            self.clear_area_consecutive_count = 0
+        else:
+            self.large_area_consecutive_count = 0
+            self.clear_area_consecutive_count += 1
+
+        # Evaluate confirmation states based on consecutive frames
+        areas_opened_confirmed = (self.large_area_consecutive_count >= consecutive_frames_threshold)
+        areas_cleared_confirmed = (self.clear_area_consecutive_count >= consecutive_frames_threshold)
+
+        # =====================================================================
+        # THREE-STATE MACHINE TRANSITIONS (DEBOUNCED)
+        # =====================================================================
+        if self.nav_state == self.STATE_NORMAL:
+            if split_avg >= self.split_threshold:
+                if areas_opened_confirmed:
+                    self.nav_state = self.STATE_HANDLING_SPLIT
+                    self.split_handling_start_time = time.time()
+                    self.get_logger().info(f"STATE TRANSITION: [NORMAL] -> [HANDLING SPLIT] (Dir: {split_direction.upper()})")
+                else:
+                    self.nav_state = self.STATE_SPLIT_AHEAD
+                    self.get_logger().info("STATE TRANSITION: [NORMAL] -> [SPLIT AHEAD] (Split detected ahead. Navigating normally.)")
+
+        elif self.nav_state == self.STATE_SPLIT_AHEAD:
+            if areas_opened_confirmed:
+                self.nav_state = self.STATE_HANDLING_SPLIT
+                self.split_handling_start_time = time.time()
+                self.get_logger().info(f"STATE TRANSITION: [SPLIT AHEAD] -> [HANDLING SPLIT] (Areas opened up continuously! Activating {split_direction.upper()} controls.)")
+            elif split_avg < self.split_threshold:
+                self.nav_state = self.STATE_NORMAL
+                self.get_logger().info("STATE TRANSITION: [SPLIT AHEAD] -> [NORMAL] (Split cleared before areas opened up.)")
+
+        elif self.nav_state == self.STATE_HANDLING_SPLIT:
+            prob_cleared = (split_avg < self.split_exit_prob_threshold)
+            
+            # The exit condition now requires areas to be cleared for the specified consecutive frames
+            if prob_cleared and areas_cleared_confirmed:
+                self.nav_state = self.STATE_NORMAL
+                self.large_area_consecutive_count = 0
+                self.clear_area_consecutive_count = 0
+                self.get_logger().info("STATE TRANSITION: [HANDLING SPLIT] -> [NORMAL] (Split successfully cleared.)")
+
+        handling_split_flag = (self.nav_state == self.STATE_HANDLING_SPLIT)
+
+        # Reset transition derivative jump spikes
+        if not handling_split_flag and self._was_handling_split:
+            self.engine.prev_time = None
+
         if self.invert_area_sign:
             area_left, area_right = area_right, area_left
             center_x = self.engine.image_width / 2.0
@@ -359,10 +545,16 @@ class VoronoiNavigator(Node):
             if side_mid_x is not None:
                 side_mid_x = 2.0 * center_x - side_mid_x
             
+        # Compute controls
         linear_vel, angular_vel = self.engine.compute_controls(
-            area_left, area_right, path_x, side_mid_x, side_dist, scan_dist, self.obstacle_threshold
+            area_left, area_right, path_x, side_mid_x, side_dist, scan_dist, self.obstacle_threshold,
+            handling_split=handling_split_flag, split_direction=split_direction,
+            split_turn_kp=split_turn_kp, split_turn_kd=split_turn_kd
         )
         
+        self._was_handling_split = handling_split_flag
+        
+        # Log formatting
         raw_diff = area_left - area_right
         path_str = f"PathX: {path_x:5.1f}" if path_x is not None else "PathX: None"
         side_str = f"SideX: {side_mid_x:5.1f}" if side_mid_x is not None else "SideX: None"
@@ -371,17 +563,33 @@ class VoronoiNavigator(Node):
         area_active = "ACTIVE" if (side_dist is None or side_dist >= self.engine.deactivate_area_threshold) else "INACTIVE"
         side_active = "ACTIVE" if (side_mid_x is not None and side_dist is not None and side_dist >= self.engine.min_side_distance) else "INACTIVE"
         
-        # Changed: Print N/A when the probability is negative
-        split_prob_str = (
-            f"SPLIT PROBABILITY: {split_prob * 100.0:5.1f}%" 
-            if split_prob >= 0.0 
-            else "SPLIT PROBABILITY: N/A"
-        )
+        if history_length >= 10:
+            prob_str = f"SPLIT PROB: {split_prob*100.0:5.1f}% (Avg: {split_avg*100.0:5.1f}%)"
+        else:
+            prob_str = f"SPLIT PROB: {split_prob*100.0:5.1f}% (Avg: N/A {history_length}/10)"
+
+        # Set status logs depending on active state
+        if self.nav_state == self.STATE_NORMAL:
+            status_str = "STATUS: [NORMAL]"
+        elif self.nav_state == self.STATE_SPLIT_AHEAD:
+            status_str = "STATUS: [SPLIT AHEAD (Normal Areas, Navigating Normally...)]"
+        elif self.nav_state == self.STATE_HANDLING_SPLIT:
+            reasons = []
+            if split_avg >= self.split_exit_prob_threshold:
+                reasons.append(f"Prob: {split_avg*100.0:.1f}%")
+            if area_left >= self.split_exit_area_threshold:
+                reasons.append(f"AreaL: {area_left:.1f}")
+            if area_right >= self.split_exit_area_threshold:
+                reasons.append(f"AreaR: {area_right:.1f}")
+            reasons_str = ", ".join(reasons)
+            
+            opp_str = " | OPPOSITE GUARDRAIL ACTIVE!" if self.engine.opposite_target_active else ""
+            status_str = f"STATUS: [SPLIT ACTIVE (Held by: {reasons_str}) | DIR: {split_direction.upper()} (ARC TURN){opp_str}]"
         
         self.get_logger().info(
             f"Areas -> L: {area_left:6.1f} | R: {area_right:6.1f} (Area: {area_active}) | "
             f"RawDiff: {raw_diff:6.1f} | {path_str} | {side_str} ({dist_str}, Side: {side_active}) | "
-            f"{split_prob_str} | Cmd Angular: {angular_vel:6.3f} rad/s",
+            f"{prob_str} {status_str} | Cmd Angular: {angular_vel:6.3f} rad/s",
             throttle_duration_sec=0.2
         )
         
@@ -413,3 +621,20 @@ def main(args=None):
 
 if __name__ == '__main__':
     main()
+
+    '''
+    Open a new terminal and print these commands to change the parameters for the direction of the split.
+
+    STRAIGHT 
+
+    ros2 param set /voronoi_navigator split_direction straight
+
+    RIGHT
+
+    ros2 param set /voronoi_navigator split_direction right
+
+    LEFT
+
+    ros2 param set /voronoi_navigator split_direction left
+
+    '''
