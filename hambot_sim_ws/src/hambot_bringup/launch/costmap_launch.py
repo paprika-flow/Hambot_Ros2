@@ -187,6 +187,7 @@ def generate_launch_description():
             '/camera/points@sensor_msgs/msg/PointCloud2[ignition.msgs.PointCloudPacked',
             '/segmentation/labels_map@sensor_msgs/msg/Image[ignition.msgs.Image',
             '/segmentation/colored_map@sensor_msgs/msg/Image[ignition.msgs.Image',
+            '/imu/data@sensor_msgs/msg/Imu[ignition.msgs.IMU',
             # ROS 2 → Gazebo (debug display)
             '/camera/sidewalk_mask@sensor_msgs/msg/Image]ignition.msgs.Image',
             '/costmap/debug_image@sensor_msgs/msg/Image]ignition.msgs.Image',
@@ -226,6 +227,7 @@ def generate_launch_description():
             'robot_radius': 0.30,
             'obstacle_inflation': 0.15,
             'route_file': LaunchConfiguration('route'),
+            'odom_topic': '/odom',
         }]
     )
 
