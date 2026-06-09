@@ -548,20 +548,25 @@ def act_compute_waypoint_bias(bb):
     dx_local = dx_world * math.cos(yaw) + dy_world * math.sin(yaw)
     dy_local = -dx_world * math.sin(yaw) + dy_world * math.cos(yaw)
 
-    # Log before any early return — user needs to see every frame
+    # Log throttled to ~1 Hz (every 5th frame at 5 Hz camera)
     node = bb['node']
     route = bb.get('route')
     cur_name = route.current() if route else None
     dist = math.hypot(dx_world, dy_world)
 
+    counter = bb.setdefault('_log_counter', 0) + 1
+    bb['_log_counter'] = counter
+    do_log = (counter % 5 == 0)
+
     if dx_local < -1.0:
         bb['bias_col'] = None
-        node.get_logger().info(
-            f'route: odom=({x:.2f},{y:.2f}) yaw={yaw:.2f} '
-            f'wp={cur_name} at ({wx:.1f},{wy:.1f}) '
-            f'local=({dx_local:.1f},{dy_local:.1f}) dist={dist:.1f}m '
-            f'behind bias_col=None'
-        )
+        if do_log:
+            node.get_logger().info(
+                f'route: odom=({x:.2f},{y:.2f}) yaw={yaw:.2f} '
+                f'wp={cur_name} at ({wx:.1f},{wy:.1f}) '
+                f'local=({dx_local:.1f},{dy_local:.1f}) dist={dist:.1f}m '
+                f'behind bias_col=None'
+            )
         return BT.SUCCESS
 
     # Convert lateral offset to costmap column
@@ -570,12 +575,13 @@ def act_compute_waypoint_bias(bb):
     bias_col = max(0, min(cols - 1, bias_col))
     bb['bias_col'] = bias_col
 
-    node.get_logger().info(
-        f'route: odom=({x:.2f},{y:.2f}) yaw={yaw:.2f} '
-        f'wp={cur_name} at ({wx:.1f},{wy:.1f}) '
-        f'local=({dx_local:.1f},{dy_local:.1f}) dist={dist:.1f}m '
-        f'active bias_col={bias_col}'
-    )
+    if do_log:
+        node.get_logger().info(
+            f'route: odom=({x:.2f},{y:.2f}) yaw={yaw:.2f} '
+            f'wp={cur_name} at ({wx:.1f},{wy:.1f}) '
+            f'local=({dx_local:.1f},{dy_local:.1f}) dist={dist:.1f}m '
+            f'active bias_col={bias_col}'
+        )
 
     return BT.SUCCESS
 
@@ -699,6 +705,7 @@ class CostmapNavigator(Node):
         self.declare_parameter('robot_radius', 0.15)
         self.declare_parameter('obstacle_inflation', 0.30)
         self.declare_parameter('route_file', '')  # path to route YAML
+        self.declare_parameter('odom_topic', '/odom')
 
         seg_topic = self.get_parameter('segmentation_topic').value
         lidar_topic = self.get_parameter('lidar_topic').value
@@ -744,7 +751,8 @@ class CostmapNavigator(Node):
         # ROS wiring
         self.create_subscription(Image, seg_topic, self.mask_callback, 10)
         self.create_subscription(LaserScan, lidar_topic, self.lidar_callback, 10)
-        self.create_subscription(Odometry, '/odom', self.odom_callback, 10)
+        odom_topic = self.get_parameter('odom_topic').value
+        self.create_subscription(Odometry, odom_topic, self.odom_callback, 10)
         self.vel_pub = self.create_publisher(Twist, '/cmd_vel', 10)
         self.debug_pub = self.create_publisher(Image, '/costmap/debug_image', 10)
 
@@ -752,6 +760,7 @@ class CostmapNavigator(Node):
         self.odom_x = 0.0
         self.odom_y = 0.0
         self.odom_yaw = 0.0
+        self.start_world_x = self.start_world_y = self.start_world_yaw = 0.0
 
         # ── Route loading ──
         route_file = self.get_parameter('route_file').value
@@ -949,7 +958,6 @@ class CostmapNavigator(Node):
         wy = self.start_world_y + ox * math.sin(self.start_world_yaw) + oy * math.cos(self.start_world_yaw)
         wyaw = self.start_world_yaw + oyaw
         wyaw = math.atan2(math.sin(wyaw), math.cos(wyaw))  # wrap to [-pi, pi]
-        return wx, wy, wyaw
         return wx, wy, wyaw
 
     # ── Odometry callback ──────────────────────────────────────
