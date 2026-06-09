@@ -33,4 +33,6 @@ test*/
 # ── SSHFS mounts ──
 *sshfs*/
 
+# ── Ignore dataset images ──
+
 processed*/
