@@ -247,14 +247,14 @@ class VoronoiNavigator(Node):
     def __init__(self):
         super().__init__('voronoi_navigator')
         
-        self.declare_parameter('kp_area', 0.35)
-        self.declare_parameter('kd_area', 0.075)
+        self.declare_parameter('kp_area', 0.25)
+        self.declare_parameter('kd_area', 0.05)
         self.declare_parameter('kp_pos', 0.2)
         self.declare_parameter('kd_pos', 0.05)
-        self.declare_parameter('kp_side', 0.35)
-        self.declare_parameter('kd_side', 0.05)
+        self.declare_parameter('kp_side', 0.25)
+        self.declare_parameter('kd_side', 0.025)
         self.declare_parameter('target_linear_speed', 0.16)
-        self.declare_parameter('max_angular_speed', 0.2)
+        self.declare_parameter('max_angular_speed', 0.15)
         self.declare_parameter('smoothing_factor', 0.15)
         self.declare_parameter('obstacle_threshold', 0.45)
         self.declare_parameter('forward_fov_deg', 40.0)
@@ -271,7 +271,7 @@ class VoronoiNavigator(Node):
 
         # Hysteresis Split Parameters
         self.declare_parameter('split_threshold', 0.75)             
-        self.declare_parameter('split_exit_prob_threshold', 0.8)    
+        self.declare_parameter('split_exit_prob_threshold', 0.75)    
         self.declare_parameter('split_exit_area_threshold', 2000.0)  
         
         self.declare_parameter('split_direction', 'straight')       
@@ -524,8 +524,8 @@ class VoronoiNavigator(Node):
         elif self.nav_state == self.STATE_HANDLING_SPLIT:
             prob_cleared = (split_avg < self.split_exit_prob_threshold)
             
-            # The exit condition now requires areas to be cleared for the specified consecutive frames
-            if prob_cleared and areas_cleared_confirmed:
+            # The exit condition only requires areas to be cleared for the specified consecutive frames
+            if areas_cleared_confirmed:
                 self.nav_state = self.STATE_NORMAL
                 self.large_area_consecutive_count = 0
                 self.clear_area_consecutive_count = 0

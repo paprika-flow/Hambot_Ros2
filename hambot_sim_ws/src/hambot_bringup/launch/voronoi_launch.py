@@ -4,7 +4,8 @@ from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription, OpaqueFunction
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import LaunchConfiguration
+from launch.substitutions import LaunchConfiguration, PythonExpression
+from launch.conditions import IfCondition
 from launch_ros.actions import Node
 import xacro
 
@@ -15,8 +16,10 @@ def parse_spawn_points(world_path):
     with open(world_path) as f:
         content = f.read()
 
+    # Generalized to capture any name prefix ending with _<number>, 
+    # supporting 'start_position_N', 'waypoint_N', 'start_point_N', etc.
     pattern = (
-        r'<frame\s+name="start_position_(\d+)"[^>]*>\s*'
+        r'<frame\s+name="[a-zA-Z_]+_(\d+)"[^>]*>\s*'
         r'<pose>([\d.-]+)\s+([\d.-]+)\s+([\d.-]+)\s+[\d.-]+\s+[\d.-]+\s+([\d.-]+)</pose>'
     )
     matches = re.findall(pattern, content)
@@ -37,15 +40,23 @@ def parse_spawn_points(world_path):
 
 def spawn_robot_action(context):
     pkg_bringup = get_package_share_directory('hambot_bringup')
-    world_file = os.path.join(pkg_bringup, 'worlds', 'campus_map.sdf')
+    
+    # Dynamically retrieve the chosen world file name
+    world_name = LaunchConfiguration('world_name').perform(context)
+    world_file = os.path.join(pkg_bringup, 'worlds', f"{world_name}.sdf")
+    
     points = parse_spawn_points(world_file)
     num_points = len(points)
 
     point_str = LaunchConfiguration('start_point').perform(context)
     idx = int(point_str) if point_str.isdigit() else 1
-    idx = max(1, min(idx, num_points))  
-
-    pose = points[idx - 1]  
+    
+    if num_points > 0:
+        idx = max(1, min(idx, num_points))  
+        pose = points[idx - 1]  
+    else:
+        # Safe fallback in case no matching frames are found in the SDF
+        pose = {'x': 0.0, 'y': 0.0, 'z': 0.1, 'yaw': 0.0}
 
     return [
         Node(
@@ -69,20 +80,28 @@ def generate_launch_description():
     pkg_bringup = get_package_share_directory('hambot_bringup')
     pkg_ros_gz_sim = get_package_share_directory('ros_gz_sim')
     
-    world_file = os.path.join(pkg_bringup, 'worlds', 'campus_test.sdf')
-    num_points = len(parse_spawn_points(world_file))
+    # 1. World Config Launch Arguments
+    world_name_arg = DeclareLaunchArgument(
+        'world_name',
+        default_value='noSplit',
+        description='Name of the world file to load (without .sdf extension)'
+    )
+
+    # Use the default world to safely generate static launch argument descriptions
+    default_world_file = os.path.join(pkg_bringup, 'worlds', 'noSplit.sdf')
+    default_points = parse_spawn_points(default_world_file)
+    num_points = len(default_points) if default_points else 1
 
     start_point_arg = DeclareLaunchArgument(
         'start_point',
         default_value='1',
         description=(
-            f'Spawn point index (1-{num_points}). '
-            f'Parsed automatically from <frame name="start_position_N"> '
-            f'in campus_map.sdf. Default=1.'
+            f'Spawn point index. Parsed automatically from the SDF file. '
+            f'Default=1.'
         )
     )
 
-    # Added: Default model path pointing to inside the shared bringup directory
+    # Default model path pointing to inside the shared bringup directory
     default_model_path = os.path.join(
         get_package_share_directory('hambot_bringup'),
         'models',
@@ -94,6 +113,28 @@ def generate_launch_description():
         default_value=default_model_path,
         description='Absolute path to the trained scikit-learn pipeline (.pkl)'
     )
+
+    # DATASET COLLECTION LAUNCH ARGUMENTS
+    collect_data_arg = DeclareLaunchArgument(
+        'collect_data',
+        default_value='false',
+        choices=['true', 'false'],
+        description='Set to true to launch the dataset collector node'
+    )
+
+    dataset_mode_arg = DeclareLaunchArgument(
+        'dataset_mode',
+        default_value='straight',
+        choices=['straight', 'split'],
+        description='Target directory mapping: "straight" or "split"'
+    )
+
+    # Dynamic save directory resolving based on the chosen mode
+    save_directory_expr = PythonExpression([
+        "'processed_rosmaster_photos_splits/processed_rosmaster_photos_splits/mask' if '",
+        LaunchConfiguration('dataset_mode'),
+        "' == 'split' else 'processed_rosmaster_photos/mask'"
+    ])
 
     xacro_file = os.path.join(pkg_description, 'urdf', 'hambot.urdf.xacro')
     robot_description_raw = xacro.process_file(xacro_file).toxml()
@@ -108,11 +149,16 @@ def generate_launch_description():
         }]
     )
 
+    # Concatenate -r, path, and world configuration via a PythonExpression
+    gz_args_expr = PythonExpression([
+        "'-r ' + '", pkg_bringup, "/worlds/' + '", LaunchConfiguration('world_name'), "' + '.sdf'"
+    ])
+
     gazebo_sim = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(pkg_ros_gz_sim, 'launch', 'gz_sim.launch.py')
         ),
-        launch_arguments={'gz_args': f'-r {world_file}'}.items()
+        launch_arguments={'gz_args': gz_args_expr}.items()
     )
 
     spawn_robot = OpaqueFunction(function=spawn_robot_action)
@@ -144,7 +190,6 @@ def generate_launch_description():
         parameters=[{'use_sim_time': True}]
     )
 
-    # Added: 'model_path' parameter pointing to our model configuration
     voronoi_path_planner = Node(
         package='hambot_bringup',
         executable='voronoi_path_planner.py',
@@ -174,14 +219,32 @@ def generate_launch_description():
         }]
     )
 
+    # DATASET COLLECTOR NODE (Runs only when collect_data is true)
+    dataset_collector = Node(
+        package='hambot_bringup',
+        executable='dataset_collector.py',
+        output='screen',
+        parameters=[{
+            'use_sim_time': True,
+            'save_directory': save_directory_expr,
+            'save_interval': 1.0,           # Saves 1 frame per second
+            'target_gray_value': 15         # Matches initargs=(15, ...) inside extract script
+        }],
+        condition=IfCondition(LaunchConfiguration('collect_data'))
+    )
+
     return LaunchDescription([
+        world_name_arg,
         start_point_arg,
         model_path_arg,
+        collect_data_arg,
+        dataset_mode_arg,
         robot_state_publisher,
         gazebo_sim,
         spawn_robot,
         bridge,
         sidewalk_segmenter,
         voronoi_path_planner,
-        voronoi_navigator
+        voronoi_navigator,
+        dataset_collector
     ])
