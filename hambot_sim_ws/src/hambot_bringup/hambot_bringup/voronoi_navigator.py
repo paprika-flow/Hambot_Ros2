@@ -270,8 +270,8 @@ class VoronoiNavigator(Node):
         self.declare_parameter('side_deadband', 0.03)
 
         # Hysteresis Split Parameters
-        self.declare_parameter('split_threshold', 0.75)             
-        self.declare_parameter('split_exit_prob_threshold', 0.75)    
+        self.declare_parameter('split_threshold', 0.6)             
+        self.declare_parameter('split_exit_prob_threshold', 0.6)    
         self.declare_parameter('split_exit_area_threshold', 2000.0)  
         
         self.declare_parameter('split_direction', 'straight')       
@@ -285,6 +285,8 @@ class VoronoiNavigator(Node):
         self.split_exit_prob_threshold = self.get_parameter('split_exit_prob_threshold').value
         self.split_exit_area_threshold = self.get_parameter('split_exit_area_threshold').value
         self.consecutive_frames_threshold = self.get_parameter('consecutive_frames_threshold').value
+        
+        # Size set to 15: 10 sliding window elements + 5 skipped elements
         self.consecutive_splits_length = 15
 
         self.split_history = deque(maxlen=self.consecutive_splits_length)
@@ -404,7 +406,7 @@ class VoronoiNavigator(Node):
             callback_group=callback_group
         )
         
-        self.get_logger().info("Voronoi Blended PID Navigator with Hysteresis, Safety Guardrail, & Arc Turning initialized.")
+        self.get_logger().info("Voronoi Blended PID Navigator with Delayed Hysteresis Tracker initialized.")
 
     def scan_callback(self, msg: LaserScan):
         angle_min = msg.angle_min
@@ -479,8 +481,10 @@ class VoronoiNavigator(Node):
             split_prob = self.latest_split_prob
             
             history_length = len(self.split_history)
-            if history_length >= self.consecutive_splits_length:
-                split_avg = sum(self.split_history) / float(self.consecutive_splits_length)
+            if history_length >= 15:
+                # Convert to a list and slice out the newest 5 elements, leaving exactly the oldest 10
+                delayed_subset = list(self.split_history)[:-5]
+                split_avg = sum(delayed_subset) / 10.0
             else:
                 split_avg = 0.0
             
@@ -563,10 +567,10 @@ class VoronoiNavigator(Node):
         area_active = "ACTIVE" if (side_dist is None or side_dist >= self.engine.deactivate_area_threshold) else "INACTIVE"
         side_active = "ACTIVE" if (side_mid_x is not None and side_dist is not None and side_dist >= self.engine.min_side_distance) else "INACTIVE"
         
-        if history_length >= 10:
-            prob_str = f"SPLIT PROB: {split_prob*100.0:5.1f}% (Avg: {split_avg*100.0:5.1f}%)"
+        if history_length >= 15:
+            prob_str = f"SPLIT PROB: {split_prob*100.0:5.1f}% (Avg (Delayed): {split_avg*100.0:5.1f}%)"
         else:
-            prob_str = f"SPLIT PROB: {split_prob*100.0:5.1f}% (Avg: N/A {history_length}/10)"
+            prob_str = f"SPLIT PROB: {split_prob*100.0:5.1f}% (Avg (Delayed): N/A {history_length}/15)"
 
         # Set status logs depending on active state
         if self.nav_state == self.STATE_NORMAL:
@@ -621,7 +625,7 @@ def main(args=None):
 
 if __name__ == '__main__':
     main()
-
+    
     '''
     Open a new terminal and print these commands to change the parameters for the direction of the split.
 
