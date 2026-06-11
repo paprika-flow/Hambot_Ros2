@@ -287,7 +287,7 @@ class VoronoiNavigator(Node):
         self.consecutive_frames_threshold = self.get_parameter('consecutive_frames_threshold').value
         
         # Size set to 15: 10 sliding window elements + 5 skipped elements
-        self.consecutive_splits_length = 15
+        self.consecutive_splits_length = 25
 
         self.split_history = deque(maxlen=self.consecutive_splits_length)
         
@@ -483,7 +483,7 @@ class VoronoiNavigator(Node):
             history_length = len(self.split_history)
             if history_length >= 15:
                 # Convert to a list and slice out the newest 5 elements, leaving exactly the oldest 10
-                delayed_subset = list(self.split_history)[:-5]
+                delayed_subset = list(self.split_history)[:-15]
                 split_avg = sum(delayed_subset) / 10.0
             else:
                 split_avg = 0.0

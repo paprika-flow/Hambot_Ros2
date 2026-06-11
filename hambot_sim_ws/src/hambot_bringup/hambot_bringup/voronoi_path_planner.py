@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import Image
@@ -56,9 +55,31 @@ def is_point_in_polygon(pt, poly_pts):
 
 def find_better_edge(vor, v0, v1, dict_ridge_points, ridge_points_v0, path_lines=[], side_vectors=[]):
     """
-    Bypasses the angle-seeking junction swap and returns the original edge.
-    This prevents the path planner from skipping local junctions.
+    Looks for an alternative lower junction vertex (rrv) to optimize the path, 
+    but stays at the original local junction (v0, v1) if that lower vertex is 
+    already part of any active side vector.
     """
+    v0_x, v0_y = vor.vertices[v0]
+    v1_x, v1_y = vor.vertices[v1]
+    
+    # Only evaluate optimization if the current segment is not part of a side vector
+    if (v0, v1) not in side_vectors and (v1, v0) not in side_vectors:
+        for rv in ridge_points_v0:
+            if rv == v1:
+                continue
+            if len(dict_ridge_points[rv]) <= 2:
+                for rrv in ridge_points_v0:
+                    rrv_x, rrv_y = vor.vertices[rrv]
+                    if len(dict_ridge_points[rrv]) >= 3:
+                        if rrv_y > v0_y:
+                            continue
+                        
+                        # Guard condition: If the candidate lower point (rrv) is 
+                        # already inside a side vector, stay at the original point.
+                        if any(rrv in edge for edge in side_vectors):
+                            continue
+                            
+                        return (rrv, v1)
     return (v0, v1)
 
 
@@ -227,7 +248,7 @@ def get_vectors_area(line, lines, dict_ridge_points, vor, side_vectors, right, b
                 if resolved_rv_x - (320 * range_val / 960) > v1_x:
                     continue
             else:
-                if v1_x - (320 * range_val / 960) > resolved_rv_x:
+                if v1_x - (320 * range_val / 960) > v1_x:
                     continue
 
             if is_triangle_line_branching:
@@ -251,25 +272,38 @@ def get_vectors_area(line, lines, dict_ridge_points, vor, side_vectors, right, b
 
 
 def get_path_lines(skeleton_lines, vor, dict_ridge_points, side_vectors):
+    """
+    Extracts candidate path lines. 
+    - Preserves standalone lanes (like the left lane) as green paths.
+    - Leaves bridges connecting multiple junctions or touching side vectors as blue.
+    """
     path_lines = []
+    
+    # Flatten side vector edges to a set of vertices for fast connectivity lookup
+    side_vertices = {v for edge in side_vectors for v in edge}
+    
     for line in skeleton_lines:
         v0, v1 = line
         ridge_points_v0 = dict_ridge_points.get(v0, [])
         ridge_points_v1 = dict_ridge_points.get(v1, [])
 
-        if len(ridge_points_v0) >= 3 and len(ridge_points_v1) >= 3:
-            continue
-
+        # Skip if the line (or its reverse) is already a side vector or already added
         if line in side_vectors or (line[1], line[0]) in side_vectors or line in path_lines or (line[1], line[0]) in path_lines:
             continue
 
-        if len(ridge_points_v0) >= 3:
+        # 1. "connecting other path lines" -> If both endpoints are junctions, keep it blue (skip)
+        if len(ridge_points_v0) >= 3 and len(ridge_points_v1) >= 3:
+            continue
+
+       
+        # Optimize junction connections using find_better_edge
+        if len(ridge_points_v0) >= 3 and len(ridge_points_v1) < 3:
             line = find_better_edge(vor, v0, v1, dict_ridge_points, ridge_points_v0, path_lines, side_vectors)
-            path_lines.append(line)
-        elif len(ridge_points_v1) >= 3:
+        elif len(ridge_points_v1) >= 3 and len(ridge_points_v0) < 3:
             line = find_better_edge(vor, v1, v0, dict_ridge_points, ridge_points_v1, path_lines, side_vectors)
-            path_lines.append(line)
-        if len(ridge_points_v0) == 1 and len(ridge_points_v1) == 1:
+        
+        # Append the (potentially optimized) line to preserve connectivity
+        if line not in path_lines and (line[1], line[0]) not in path_lines:
             path_lines.append(line)
         
     return path_lines
@@ -362,7 +396,41 @@ def find_straight_path(path_lines, vor, prev_coordinates, scale_factor=1.0):
     return possible_paths, possible_path, best_angle
 
 
+# =====================================================================
+# TOPOLOGICAL GRAPH FILTER (UNION-FIND)
+# =====================================================================
+
+class DisjointSetUnion:
+    """
+    An optimized Disjoint Set Union (Union-Find) structure with path compression
+    used to compute a Spanning Forest and eliminate Voronoi boundary cycles.
+    """
+    def __init__(self, n):
+        self.parent = list(range(n))
+
+    def find(self, i):
+        path = []
+        while self.parent[i] != i:
+            path.append(i)
+            i = self.parent[i]
+        for node in path:
+            self.parent[node] = i
+        return i
+
+    def union(self, i, j):
+        root_i = self.find(i)
+        root_j = self.find(j)
+        if root_i != root_j:
+            self.parent[root_i] = root_j
+            return True
+        return False
+
+
 def get_skeleton_lines(vor, poly_pts):
+    """
+    Computes skeletal lines by filtering Voronoi vertices, extracting raw edges,
+    and using a Spanning Forest to eliminate triangles and cycles before collapsing degree-2 chains.
+    """
     dict_ridge_points = {i: list() for i in range(len(vor.vertices))}
     ridge_lines = []
     vertex_to_edge = {}
@@ -372,6 +440,7 @@ def get_skeleton_lines(vor, poly_pts):
             continue
         v0, v1 = vor.vertices[rv[0]], vor.vertices[rv[1]]
         
+        # Fast midpoint & endpoint checks (no shapely dependency)
         if not is_point_in_polygon(v0, poly_pts):
             continue
         if not is_point_in_polygon(v1, poly_pts):
@@ -388,6 +457,7 @@ def get_skeleton_lines(vor, poly_pts):
             continue
         v0, v1 = vor.vertices[rv[0]], vor.vertices[rv[1]]
         
+        # Fast midpoint & endpoint checks
         if not is_point_in_polygon(v0, poly_pts):
             continue
         if not is_point_in_polygon(v1, poly_pts):
@@ -418,6 +488,26 @@ def get_skeleton_lines(vor, poly_pts):
             ridge_lines.append(new_edge)
             vertex_to_edge[v0] = new_edge
             vertex_to_edge[v1] = new_edge
+
+    # --- TOPOLOGICAL CYCLE FILTERING (SPANNING FOREST) ---
+    # Sort segments descending by length to prioritize the long main path trunks
+    ridge_lines_sorted = sorted(
+        ridge_lines,
+        key=lambda edge: get_distance(vor.vertices[edge[0]], vor.vertices[edge[1]]),
+        reverse=True
+    )
+    
+    dsu = DisjointSetUnion(len(vor.vertices))
+    spanning_ridge_lines = []
+    
+    # Process edges and discard those that would close a loop/triangle
+    for edge in ridge_lines_sorted:
+        u, v = edge[0], edge[1]
+        if dsu.union(u, v):
+            spanning_ridge_lines.append(edge)
+            
+    ridge_lines = spanning_ridge_lines
+    # -----------------------------------------------------
 
     dict_ridge_points = {i: list() for i in range(len(vor.vertices))}
     adj = defaultdict(list)
@@ -513,7 +603,6 @@ def interpreting_skeletons(skeleton_lines, dict_ridge_points, vor, straight_path
         _, best_possible_path, best_angle = find_straight_path(path_lines, vor, straight_path, scale_factor)
     
     return path_lines, best_angle, area_percentage_difference, best_possible_path, side_vectors, area_left, area_right, left_lower_pt, right_lower_pt
-
 
 # =====================================================================
 # VORONOI CLASSIFIER FEATURE EXTRACTION
