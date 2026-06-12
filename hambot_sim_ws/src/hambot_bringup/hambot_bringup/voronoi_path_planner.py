@@ -735,6 +735,10 @@ class VoronoiPathPlanner(Node):
         self.angle_pub = self.create_publisher(Float32, '/voronoi/best_angle', 10)
         self.area_diff_pub = self.create_publisher(Float32, '/voronoi/area_difference', 10)
         self.best_path_pub = self.create_publisher(PoseArray, '/voronoi/best_path', 10)
+        
+        # New Topic: Publishes all candidate green path lines collectively
+        self.candidate_paths_pub = self.create_publisher(PoseArray, '/voronoi/candidate_paths', 10)
+        
         self.area_left_pub = self.create_publisher(Float32, '/voronoi/area_left', 10)
         self.area_right_pub = self.create_publisher(Float32, '/voronoi/area_right', 10)
         
@@ -763,6 +767,28 @@ class VoronoiPathPlanner(Node):
             f"Processing: {self.resize_width}x{self.resize_height} | Display: {self.resize_width}x{self.resize_height}"
         )
 
+    def publish_candidate_paths(self, header, paths, vor):
+        pose_array = PoseArray()
+        pose_array.header = header
+        poses = []
+        for line in paths:
+            p0_cart = vor.vertices[line[0]]
+            p1_cart = vor.vertices[line[1]]
+            
+            pose0 = Pose()
+            pose0.position.x = float(p0_cart[0])
+            pose0.position.y = float(p0_cart[1])
+            pose0.position.z = 0.0
+            
+            pose1 = Pose()
+            pose1.position.x = float(p1_cart[0])
+            pose1.position.y = float(p1_cart[1])
+            pose1.position.z = 0.0
+            
+            poses.extend([pose0, pose1])
+        pose_array.poses = poses
+        self.candidate_paths_pub.publish(pose_array)
+
     def mask_callback(self, msg: Image):
         try:
             # 1. Decode raw image message natively
@@ -789,7 +815,7 @@ class VoronoiPathPlanner(Node):
             contours, _ = cv2.findContours(binary_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
             if not contours:
                 self.publish_blank_debug_image(msg.header)
-                self.publish_empty_pose_array(msg.header)
+                self.publish_empty_pose_arrays(msg.header)
                 # Publish 0.0 split probability on tracking loss
                 prob_msg = Float32()
                 prob_msg.data = 0.0
@@ -832,6 +858,9 @@ class VoronoiPathPlanner(Node):
                 
                 # Publish physical coordinates directly
                 self.publish_best_path_pose_array(msg.header, p0_cart, p1_cart)
+
+            # Publish all green candidate lines to the new topic
+            self.publish_candidate_paths(msg.header, paths, vor)
 
             # 5. Live Split Classification Inference
             self.compute_and_publish_split_probability(vor, paths, side_vectors, w, h)
@@ -1018,11 +1047,12 @@ class VoronoiPathPlanner(Node):
         pose_array.poses = [pose0, pose1]
         self.best_path_pub.publish(pose_array)
 
-    def publish_empty_pose_array(self, header):
+    def publish_empty_pose_arrays(self, header):
         pose_array = PoseArray()
         pose_array.header = header
         pose_array.poses = []
         self.best_path_pub.publish(pose_array)
+        self.candidate_paths_pub.publish(pose_array)
 
 
 def main(args=None):
