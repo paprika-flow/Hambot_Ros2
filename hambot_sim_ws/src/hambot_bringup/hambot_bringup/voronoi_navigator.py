@@ -283,7 +283,11 @@ class VoronoiNavigator(Node):
         self.declare_parameter('consecutive_frames_threshold', 4)       
         
         # Area Threshold for Way layout counting
-        self.declare_parameter('way_area_threshold', 1000.0)
+        self.declare_parameter('way_area_threshold', 6000.0)
+
+        # Split Validation Parameters
+        self.declare_parameter('min_split_duration', 7.0)                # Increased to 7.0 seconds as requested
+        self.declare_parameter('require_target_area_confirmation', True) # Must observe target area open up
 
         self.split_threshold = self.get_parameter('split_threshold').value
         self.split_exit_prob_threshold = self.get_parameter('split_exit_prob_threshold').value
@@ -291,12 +295,18 @@ class VoronoiNavigator(Node):
         self.split_exit_area_threshold = self.get_parameter('split_exit_area_threshold').value
         self.consecutive_frames_threshold = self.get_parameter('consecutive_frames_threshold').value
         self.way_area_threshold = self.get_parameter('way_area_threshold').value
+        self.min_split_duration = self.get_parameter('min_split_duration').value
+        self.require_target_area_confirmation = self.get_parameter('require_target_area_confirmation').value
         
         # Size set to 25
         self.consecutive_splits_length = 25
 
         self.split_history = deque(maxlen=self.consecutive_splits_length)
         
+        # Area sliding window history for continuous average calculation (size: 15)
+        self.area_left_window = deque(maxlen=15)
+        self.area_right_window = deque(maxlen=15)
+
         # State machine tracking variables
         self.nav_state = self.STATE_NORMAL
         self.large_area_consecutive_count = 0
@@ -311,6 +321,10 @@ class VoronoiNavigator(Node):
             'right': 0,
             'total_frames': 0
         }
+
+        # Split verification flags
+        self.genuine_split_confirmed = False
+        self.target_area_observed_high = False
 
         self.engine = VoronoiNavigationEngine(
             kp_area=self.get_parameter('kp_area').value,
@@ -348,6 +362,7 @@ class VoronoiNavigator(Node):
         self.latest_side_mid_x = None
         self.latest_side_dist = None
         self.latest_split_prob = -1.0
+        self.latest_candidate_paths = []
         
         callback_group = ReentrantCallbackGroup()
         self.cmd_pub = self.create_publisher(Twist, '/cmd_vel', 10)
@@ -431,7 +446,7 @@ class VoronoiNavigator(Node):
             callback_group=callback_group
         )
         
-        self.get_logger().info("Voronoi Blended PID Navigator with Delayed Hysteresis Tracker initialized.")
+        self.get_logger().info("Voronoi Blended PID Navigator with Rolling Average validation initialized.")
 
     def scan_callback(self, msg: LaserScan):
         angle_min = msg.angle_min
@@ -545,6 +560,29 @@ class VoronoiNavigator(Node):
         else:
             self.get_logger().warn("SPLIT LAYOUT SUMMARY: No split-event data was captured.")
 
+    def log_passed_split_characteristics(self, duration: float):
+        tf = self.split_ways_record['total_frames']
+        if tf > 0:
+            pct_l = (self.split_ways_record['left'] / tf) * 100.0
+            pct_s = (self.split_ways_record['straight'] / tf) * 100.0
+            pct_r = (self.split_ways_record['right'] / tf) * 100.0
+            
+            self.get_logger().info(
+                f"\n"
+                f"====================================================\n"
+                f"   SUCCESSFULLY PASSED GENUINE SPLIT (Cleared!)\n"
+                f"   Navigated Direction: {self.get_parameter('split_direction').value.upper()}\n"
+                f"   Active Phase Duration: {duration:.2f} seconds\n"
+                f"====================================================\n"
+                f"  SPLIT CHARACTERISTICS (APPROACH SUMMARY):\n"
+                f"  LEFT BRANCH:     {pct_l:5.1f}%\n"
+                f"  STRAIGHT BRANCH: {pct_s:5.1f}%\n"
+                f"  RIGHT BRANCH:    {pct_r:5.1f}%\n"
+                f"===================================================="
+            )
+        else:
+            self.get_logger().warn("PASSED SPLIT SUMMARY: Split cleared, but no layout metrics were available.")
+
     def classify_current_frame_ways(self, area_left, area_right, candidate_paths):
         left_detected = False
         straight_detected = False
@@ -558,15 +596,15 @@ class VoronoiNavigator(Node):
         # Evaluate ALL candidate green path lines (dashed lines)
         for path_angle, path_top_x in candidate_paths:
             # 1. Evaluate Straight Way (Requires both vertical angle and center-sector target alignment)
-            if (70.0 <= path_angle <= 110.0) and (left_bound <= path_top_x <= right_bound):
+            if (70.0 <= path_angle <= 110.0) or (left_bound <= path_top_x <= right_bound):
                 straight_detected = True
 
-            # 2. Evaluate Left Way (Angle leaning left OR furthest point positioned to the left)
-            if (path_angle > 110.0) or (path_top_x < left_bound):
+            # 2. Evaluate Left Way (Angle leaning left AND furthest point positioned to the left)
+            if (path_angle > 110.0) and (path_top_x < left_bound):
                 left_detected = True
 
-            # 3. Evaluate Right Way (Angle leaning right OR furthest point positioned to the right)
-            if (path_angle < 70.0) or (path_top_x > right_bound):
+            # 3. Evaluate Right Way (Angle leaning right AND furthest point positioned to the right)
+            if (path_angle < 70.0) and (path_top_x > right_bound):
                 right_detected = True
 
         # 4. Evaluate Left side opening areas (backup reference)
@@ -616,6 +654,14 @@ class VoronoiNavigator(Node):
             else:
                 split_avg = 0.0
 
+        # Append latest areas to rolling history windows
+        self.area_left_window.append(area_left)
+        self.area_right_window.append(area_right)
+
+        # Calculate continuous averages
+        avg_left = sum(self.area_left_window) / len(self.area_left_window) if self.area_left_window else area_left
+        avg_right = sum(self.area_right_window) / len(self.area_right_window) if self.area_right_window else area_right
+
         # Accumulate branch observations ONLY during warning phase (split ahead)
         if self.nav_state == self.STATE_SPLIT_AHEAD:
             self.classify_current_frame_ways(area_left, area_right, candidate_paths)
@@ -624,14 +670,11 @@ class VoronoiNavigator(Node):
         # STATE-DEPENDENT AREA THRESHOLD HYSTERESIS
         # =====================================================================
         if self.nav_state == self.STATE_HANDLING_SPLIT:
-            # Already active: Use smaller exit threshold to determine if clear (2000.0)
-            active_area_threshold = self.split_exit_area_threshold
+            # Active clearance check using continuous average and the way_area_threshold
+            any_area_big = (avg_left >= self.way_area_threshold or avg_right >= self.way_area_threshold)
         else:
-            # Entering: Use larger entry threshold to trigger transition (4000.0)
-            active_area_threshold = self.split_entry_area_threshold
-
-        # Determine if either side-vector area exceeds the dynamic active threshold
-        any_area_big = (area_left >= active_area_threshold or area_right >= active_area_threshold)
+            # Entering: Use larger peak threshold to trigger transition
+            any_area_big = (area_left >= self.split_entry_area_threshold or area_right >= self.split_entry_area_threshold)
         
         # Debounce logic for entry and exit transitions using a single frame threshold
         if any_area_big:
@@ -659,6 +702,8 @@ class VoronoiNavigator(Node):
                     
                     self.nav_state = self.STATE_HANDLING_SPLIT
                     self.split_handling_start_time = time.time()
+                    self.genuine_split_confirmed = False
+                    self.target_area_observed_high = False
                     self.get_logger().info(f"STATE TRANSITION: [NORMAL] -> [HANDLING SPLIT] (Dir: {split_direction.upper()})")
                     
                     # Print layout summary instantly on transition to active handling
@@ -671,6 +716,8 @@ class VoronoiNavigator(Node):
             if areas_opened_confirmed:
                 self.nav_state = self.STATE_HANDLING_SPLIT
                 self.split_handling_start_time = time.time()
+                self.genuine_split_confirmed = False
+                self.target_area_observed_high = False
                 self.get_logger().info(f"STATE TRANSITION: [SPLIT AHEAD] -> [HANDLING SPLIT] (Areas opened up continuously! Activating {split_direction.upper()} controls.)")
                 
                 # Print layout summary instantly on transition to active handling
@@ -680,14 +727,37 @@ class VoronoiNavigator(Node):
                 self.get_logger().info("STATE TRANSITION: [SPLIT AHEAD] -> [NORMAL] (Split cleared before areas opened up.)")
 
         elif self.nav_state == self.STATE_HANDLING_SPLIT:
-            prob_cleared = (split_avg < self.split_exit_prob_threshold)
+            # Check if genuine criteria are met while inside the handling state
+            duration = time.time() - self.split_handling_start_time
             
+            # 1. Target side area confirmation (the requested branch actually opened up in the rolling average)
+            if self.require_target_area_confirmation:
+                if split_direction == 'left' and avg_left >= self.way_area_threshold:
+                    self.target_area_observed_high = True
+                elif split_direction == 'right' and avg_right >= self.way_area_threshold:
+                    self.target_area_observed_high = True
+                elif split_direction == 'straight' and (avg_left >= self.way_area_threshold or avg_right >= self.way_area_threshold):
+                    self.target_area_observed_high = True
+            else:
+                self.target_area_observed_high = True
+
+            # 2. Time condition met (7.0 seconds minimum) + target area was confirmed open
+            if duration >= self.min_split_duration and self.target_area_observed_high:
+                if not self.genuine_split_confirmed:
+                    self.genuine_split_confirmed = True
+                    self.get_logger().info(f"GENUINE SPLIT VERIFIED: Approach meets {self.min_split_duration}s duration and rolling average criteria.")
+
             # The exit condition only requires areas to be cleared for the specified consecutive frames
             if areas_cleared_confirmed:
                 self.nav_state = self.STATE_NORMAL
                 self.large_area_consecutive_count = 0
                 self.clear_area_consecutive_count = 0
-                self.get_logger().info("STATE TRANSITION: [HANDLING SPLIT] -> [NORMAL] (Split successfully cleared.)")
+                
+                if self.genuine_split_confirmed:
+                    self.get_logger().info("STATE TRANSITION: [HANDLING SPLIT] -> [NORMAL] (Split successfully cleared!)")
+                    self.log_passed_split_characteristics(duration)
+                else:
+                    self.get_logger().info(f"STATE TRANSITION: [HANDLING SPLIT] -> [NORMAL] (Exited active state. Dismissed as transient noise/alignment correction. Duration: {duration:.2f}s)")
 
         handling_split_flag = (self.nav_state == self.STATE_HANDLING_SPLIT)
 
@@ -747,18 +817,18 @@ class VoronoiNavigator(Node):
             reasons = []
             if split_avg >= self.split_exit_prob_threshold:
                 reasons.append(f"Prob: {split_avg*100.0:.1f}%")
-            if area_left >= self.split_exit_area_threshold:
-                reasons.append(f"AreaL: {area_left:.1f}")
-            if area_right >= self.split_exit_area_threshold:
-                reasons.append(f"AreaR: {area_right:.1f}")
+            if avg_left >= self.way_area_threshold:
+                reasons.append(f"AvgL: {avg_left:.1f}")
+            if avg_right >= self.way_area_threshold:
+                reasons.append(f"AvgR: {avg_right:.1f}")
             reasons_str = ", ".join(reasons)
             
             opp_str = " | OPPOSITE GUARDRAIL ACTIVE!" if self.engine.opposite_target_active else ""
             status_str = f"STATUS: [SPLIT ACTIVE ({layout_str}) (Held by: {reasons_str}) | DIR: {split_direction.upper()} (ARC TURN){opp_str}]"
         
         self.get_logger().info(
-            f"Areas -> L: {area_left:6.1f} | R: {area_right:6.1f} (Area: {area_active}) | "
-            f"RawDiff: {raw_diff:6.1f} | {path_str} | {side_str} ({dist_str}, Side: {side_active}) | "
+            f"Areas -> L: {area_left:6.1f} (Avg: {avg_left:6.1f}) | R: {area_right:6.1f} (Avg: {avg_right:6.1f}) | "
+            f"RawDiff: {raw_diff:6.1f} | {path_str} | {side_str} ({dist_str}) | "
             f"{prob_str} {status_str} | Cmd Angular: {angular_vel:6.3f} rad/s",
             throttle_duration_sec=0.2
         )
@@ -791,7 +861,7 @@ def main(args=None):
 
 if __name__ == '__main__':
     main()
-        
+    
     '''
     Open a new terminal and print these commands to change the parameters for the direction of the split.
 
