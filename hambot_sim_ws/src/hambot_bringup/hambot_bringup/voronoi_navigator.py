@@ -262,7 +262,9 @@ class VoronoiNavigator(Node):
         self.declare_parameter('split_turn_kd', 0.1)                       
         self.declare_parameter('consecutive_frames_threshold', 4)       
         self.declare_parameter('way_area_threshold', 6000.0)
-        self.declare_parameter('min_split_duration', 7.0)                
+        
+        # Reduced to 3.0 seconds to make simulator runs more responsive
+        self.declare_parameter('min_split_duration', 3.0)                
         self.declare_parameter('require_target_area_confirmation', True) 
 
         self.split_threshold = self.get_parameter('split_threshold').value
@@ -286,9 +288,7 @@ class VoronoiNavigator(Node):
         self.split_handling_start_time = 0.0
         self._was_handling_split = False
 
-        self.split_ways_record = {
-            'left': 0, 'straight': 0, 'right': 0, 'total_frames': 0
-        }
+        self.split_ways_record = {'left': 0, 'straight': 0, 'right': 0, 'total_frames': 0}
 
         self.genuine_split_confirmed = False
         self.target_area_observed_high = False
@@ -331,9 +331,6 @@ class VoronoiNavigator(Node):
         self.latest_split_prob = -1.0
         self.latest_candidate_paths = []
         
-        # =====================================================================
-        # GLOBAL PLANNER INTERACTION INTERFACE
-        # =====================================================================
         self.active_split_direction = self.get_parameter('split_direction').value
         
         callback_group = ReentrantCallbackGroup()
@@ -551,7 +548,7 @@ class VoronoiNavigator(Node):
             self.classify_current_frame_ways(area_left, area_right, candidate_paths)
 
         if self.nav_state == self.STATE_HANDLING_SPLIT:
-            any_area_big = (avg_left >= self.way_area_threshold or avg_right >= self.way_area_threshold)
+            any_area_big = (avg_left >= self.split_exit_area_threshold  and avg_right >= self.split_exit_area_threshold )
         else:
             any_area_big = (area_left >= self.split_entry_area_threshold or area_right >= self.split_entry_area_threshold)
         
@@ -566,7 +563,7 @@ class VoronoiNavigator(Node):
         areas_cleared_confirmed = (self.clear_area_consecutive_count >= consecutive_frames_threshold)
 
         # =====================================================================
-        # STATE TRANSITIONS WITH INTEGRATED PLANNER NOTIFICATIONS
+        # STATE TRANSITIONS WITH EXPLICIT DURATION ANALYSIS
         # =====================================================================
         if self.nav_state == self.STATE_NORMAL:
             if split_avg >= self.split_threshold:
@@ -622,15 +619,18 @@ class VoronoiNavigator(Node):
                     self.get_logger().info("STATE TRANSITION: [HANDLING SPLIT] -> [NORMAL] (Split cleared!)")
                     self.log_passed_split_characteristics(duration)
                     
-                    # =========================================================
-                    # TRANSMIT CLEARANCE FEEDBACK TO GLOBAL PLANNER
-                    # =========================================================
                     completion_msg = String()
                     completion_msg.data = "completed"
                     self.turn_completed_pub.publish(completion_msg)
                     self.get_logger().info("COORDINATION: Sent clearance signal to global planner.")
                 else:
-                    self.get_logger().info(f"STATE TRANSITION: [HANDLING SPLIT] -> [NORMAL] (Transient exit, duration: {duration:.1f}s)")
+                    # Explicit diagnostic warning if a split ends but was not confirmed genuine
+                    self.get_logger().warn(
+                        f"STATE TRANSITION: [HANDLING SPLIT] -> [NORMAL] (Exited, but DISMISSED as transient noise! Duration: {duration:.2f}s). "
+                        f"No clearance message sent to global planner. "
+                        f"Requires minimum duration >= {self.min_split_duration}s (current: {duration:.2f}s) and "
+                        f"target_area_observed_high={self.target_area_observed_high} (current: {self.target_area_observed_high})."
+                    )
 
         handling_split_flag = (self.nav_state == self.STATE_HANDLING_SPLIT)
 

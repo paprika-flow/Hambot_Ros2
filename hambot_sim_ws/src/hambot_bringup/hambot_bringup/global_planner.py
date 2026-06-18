@@ -330,31 +330,51 @@ class GlobalPlannerNode(Node):
         if msg.data == "completed":
             if self.current_turn_index < len(self.turn_sequence):
                 node_name, turn_dir = self.turn_sequence[self.current_turn_index]
-                self.get_logger().info(f"COORDINATION: Split action '{turn_dir.upper()}' at Node {node_name} completed.")
+                self.get_logger().info(f"COORDINATION_UPDATE: Split action '{turn_dir.upper()}' at Node {node_name} completed.")
                 
                 # Advance step index
                 self.current_turn_index += 1
                 
                 if self.current_turn_index < len(self.turn_sequence):
                     next_node, next_dir = self.turn_sequence[self.current_turn_index]
-                    self.get_logger().info(f"COORDINATION: Setting action direction to '{next_dir.upper()}' for Node {next_node}.")
+                    self.get_logger().info(f"COORDINATION_UPDATE: Advancing plan. Target is now: '{next_dir.upper()}' for Node {next_node}.")
                 else:
-                    self.get_logger().info("COORDINATION: Final turn cleared. Direct corridor path remaining to destination.")
+                    self.get_logger().info("COORDINATION_UPDATE: Final turn cleared. Direct corridor path remaining to destination.")
             else:
-                self.get_logger().warn("COORDINATION: Received clearance signal, but no pending tasks are remaining.")
+                self.get_logger().warn("COORDINATION_UPDATE: Received clearance signal, but no pending tasks are remaining.")
 
     def publish_current_target(self):
         msg = String()
+        
+        # Ensure we have a valid calculated route path
+        if not self.path or len(self.path) < 2:
+            msg.data = "stop"
+            self.target_dir_pub.publish(msg)
+            return
+
         if self.current_turn_index < len(self.turn_sequence):
             _, turn_dir = self.turn_sequence[self.current_turn_index]
             msg.data = turn_dir
+            
+            # Estimate and print the current edge the robot is traversing
+            k = self.current_turn_index
+            if k < len(self.path) - 1:
+                node_a = self.path[k]
+                node_b = self.path[k+1]
+                self.get_logger().info(
+                    f"TRACKER: Robot is traversing edge {node_a.name} <-> {node_b.name}. Next turn decision at Node {node_b.name} is '{turn_dir.upper()}'",
+                    throttle_duration_sec=3.0
+                )
         else:
-            # Check if we have completed all tasks on the route list
-            if len(self.path) > 0:
-                # Arrived at final straight section or destination, hold centering and prepare to end
-                msg.data = "straight"
-            else:
-                msg.data = "stop"
+            # We have cleared all active turns. We are traversing the final straight section
+            node_a = self.path[-2]
+            node_b = self.path[-1]
+            self.get_logger().info(
+                f"TRACKER: Robot is on the final straight section {node_a.name} <-> {node_b.name} approaching target.",
+                throttle_duration_sec=3.0
+            )
+            msg.data = "straight"
+            
         self.target_dir_pub.publish(msg)
 
 
@@ -371,7 +391,6 @@ def main(args=None):
 
 if __name__ == '__main__':
     main()
-
 
 '''
 ros2 launch hambot_bringup voronoi_launch.py \
