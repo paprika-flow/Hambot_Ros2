@@ -651,7 +651,11 @@ def act_follow_path(bb):
         cross_angle = kp * (cte / half) * 0.4
 
     final = 0.6 * path_angle + 0.4 * cross_angle
-    twist.linear.x = speed
+    # Dynamic speed: slower on sharp turns, faster on straights
+    # max_angular = max reasonable turn rate (rad/s)
+    max_angular = 0.5
+    speed_scale = max(0.25, 1.0 - abs(final) / max_angular)
+    twist.linear.x = speed * speed_scale
     twist.angular.z = final
     node.vel_pub.publish(twist)
     return BT.SUCCESS

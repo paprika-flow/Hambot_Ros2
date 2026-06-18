@@ -23,14 +23,13 @@ docker compose up -d
 docker exec -it hambot bash
 ```
 
-### Adding new package
-
-- add package in the interactive terminal
-  - if it worked add it to the dockerfile so 
-  - 
-
 ### End of session
 ```bash
 docker compose down
-docker compose build
+sh build_docker.sh
+```
+
+### copying files
+```bash
+rsync -avzP "/Users/cj/Desktop/usf files/dreu/Hambot/cj_ros_ws/" hambot@192.168.1.115:/home/hambot/cj_ros_ws/
 ```
