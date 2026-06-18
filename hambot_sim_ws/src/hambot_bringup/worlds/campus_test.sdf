@@ -70,19 +70,19 @@
     <model name="sidewalk_network">
       <static>true</static>
 
-      <!-- Segment 0: Length 25.00m, Width 1.20m, Height 0.05m -->
+      <!-- Segment 0: Length 17.69m, Width 1.20m, Height 0.05m -->
       <link name="segment_0">
-        <pose>0.0000 -8.0000 0.0 0 0 1.5708</pose>
+        <pose>0.7151 -5.7896 0.0 0 0 1.5890</pose>
         <collision name="col">
-          <pose>12.5000 0 0.0250 0 0 0</pose>
+          <pose>8.8461 0 0.0250 0 0 0</pose>
           <geometry>
-            <box><size>25.0000 1.2000 0.0500</size></box>
+            <box><size>17.6923 1.2000 0.0500</size></box>
           </geometry>
         </collision>
         <visual name="vis">
-          <pose>12.5000 0 0.0250 0 0 0</pose>
+          <pose>8.8461 0 0.0250 0 0 0</pose>
           <geometry>
-            <box><size>25.0000 1.2000 0.0500</size></box>
+            <box><size>17.6923 1.2000 0.0500</size></box>
           </geometry>
           <material>
             <ambient>0.65 0.65 0.65 1</ambient>
@@ -214,32 +214,8 @@
         </visual>
       </link>
 
-      <!-- Segment 6: Length 11.00m, Width 1.20m, Height 0.05m -->
+      <!-- Segment 6: Length 25.00m, Width 1.20m, Height 0.05m -->
       <link name="segment_6">
-        <pose>0.0000 -19.0000 0.0 0 0 1.5708</pose>
-        <collision name="col">
-          <pose>5.5000 0 0.0250 0 0 0</pose>
-          <geometry>
-            <box><size>11.0000 1.2000 0.0500</size></box>
-          </geometry>
-        </collision>
-        <visual name="vis">
-          <pose>5.5000 0 0.0250 0 0 0</pose>
-          <geometry>
-            <box><size>11.0000 1.2000 0.0500</size></box>
-          </geometry>
-          <material>
-            <ambient>0.65 0.65 0.65 1</ambient>
-            <diffuse>0.65 0.65 0.65 1</diffuse>
-          </material>
-          <plugin filename="ignition-gazebo-label-system" name="ignition::gazebo::systems::Label">
-            <label>1</label> <!-- 1 = Sidewalk -->
-          </plugin>
-        </visual>
-      </link>
-
-      <!-- Segment 7: Length 25.00m, Width 1.20m, Height 0.05m -->
-      <link name="segment_7">
         <pose>13.0000 -8.0000 0.0 0 0 1.5708</pose>
         <collision name="col">
           <pose>12.5000 0 0.0250 0 0 0</pose>
@@ -262,8 +238,8 @@
         </visual>
       </link>
 
-      <!-- Segment 8: Length 1.40m, Width 1.20m, Height 0.05m -->
-      <link name="segment_8">
+      <!-- Segment 7: Length 1.40m, Width 1.20m, Height 0.05m -->
+      <link name="segment_7">
         <pose>-10.8135 -14.5049 0.0 0 0 -1.7819</pose>
         <collision name="col">
           <pose>0.7024 0 0.0250 0 0 0</pose>
@@ -286,8 +262,8 @@
         </visual>
       </link>
 
-      <!-- Segment 9: Length 1.14m, Width 1.20m, Height 0.05m -->
-      <link name="segment_9">
+      <!-- Segment 8: Length 1.14m, Width 1.20m, Height 0.05m -->
+      <link name="segment_8">
         <pose>-10.9770 -15.6162 0.0 0 0 -2.2950</pose>
         <collision name="col">
           <pose>0.5676 0 0.0250 0 0 0</pose>
@@ -310,8 +286,8 @@
         </visual>
       </link>
 
-      <!-- Segment 10: Length 1.18m, Width 1.20m, Height 0.05m -->
-      <link name="segment_10">
+      <!-- Segment 9: Length 1.18m, Width 1.20m, Height 0.05m -->
+      <link name="segment_9">
         <pose>-11.4840 -16.2783 0.0 0 0 -2.7426</pose>
         <collision name="col">
           <pose>0.5917 0 0.0250 0 0 0</pose>
@@ -334,8 +310,8 @@
         </visual>
       </link>
 
-      <!-- Segment 11: Length 1.68m, Width 1.20m, Height 0.05m -->
-      <link name="segment_11">
+      <!-- Segment 10: Length 1.68m, Width 1.20m, Height 0.05m -->
+      <link name="segment_10">
         <pose>-12.3179 -16.6739 0.0 0 0 -3.1289</pose>
         <collision name="col">
           <pose>0.8393 0 0.0250 0 0 0</pose>
@@ -358,8 +334,8 @@
         </visual>
       </link>
 
-      <!-- Segment 12: Length 1.41m, Width 1.20m, Height 0.05m -->
-      <link name="segment_12">
+      <!-- Segment 11: Length 1.41m, Width 1.20m, Height 0.05m -->
+      <link name="segment_11">
         <pose>-13.6329 -16.8556 0.0 0 0 2.4313</pose>
         <collision name="col">
           <pose>0.7050 0 0.0250 0 0 0</pose>
@@ -382,8 +358,8 @@
         </visual>
       </link>
 
-      <!-- Segment 13: Length 1.51m, Width 1.20m, Height 0.05m -->
-      <link name="segment_13">
+      <!-- Segment 12: Length 1.51m, Width 1.20m, Height 0.05m -->
+      <link name="segment_12">
         <pose>-14.5329 -16.1487 0.0 0 0 1.9775</pose>
         <collision name="col">
           <pose>0.7567 0 0.0250 0 0 0</pose>
@@ -406,8 +382,8 @@
         </visual>
       </link>
 
-      <!-- Segment 14: Length 3.12m, Width 1.20m, Height 0.05m -->
-      <link name="segment_14">
+      <!-- Segment 13: Length 3.12m, Width 1.20m, Height 0.05m -->
+      <link name="segment_13">
         <pose>-15.0546 -14.9894 0.0 0 0 1.5811</pose>
         <collision name="col">
           <pose>1.5610 0 0.0250 0 0 0</pose>
@@ -434,49 +410,64 @@
     <!-- ========================================== -->
     <!-- 5. PREDEFINED SPAWN POINTS                 -->
     <!-- ========================================== -->
-    <!-- Waypoint: start_position_1 -->
-    <frame name="start_position_1">
-      <pose>0.0000 -8.0000 0.1000 0.0000 0.0000 1.5708</pose>
+    <!-- Waypoint: node_0 -->
+    <frame name="node_0">
+      <pose>0.7400 -4.9800 0.1000 0.0000 0.0000 1.5708</pose>
     </frame>
 
-    <!-- Waypoint: start_position_2 -->
-    <frame name="start_position_2">
-      <pose>0.0000 -1.5000 0.1000 0.0000 0.0000 1.5708</pose>
+    <!-- Waypoint: node_6 -->
+    <frame name="node_6">
+      <pose>0.4800 7.1100 0.1000 0.0000 0.0000 1.5708</pose>
     </frame>
 
-    <!-- Waypoint: start_position_3 -->
-    <frame name="start_position_3">
-      <pose>0.0000 -8.5000 0.1000 0.0000 0.0000 -1.5708</pose>
+    <!-- Waypoint: node_3 -->
+    <frame name="node_3">
+      <pose>-7.9400 -3.9100 0.1000 0.0000 0.0000 1.0706</pose>
     </frame>
 
-    <!-- Waypoint: start_position_4 -->
-    <frame name="start_position_4">
-      <pose>-6.5000 7.0000 0.1000 0.0000 0.0000 3.1416</pose>
+    <!-- Waypoint: node_4 -->
+    <frame name="node_4">
+      <pose>-9.9200 7.0700 0.1000 0.0000 0.0000 3.1416</pose>
     </frame>
 
-    <!-- Waypoint: start_position_5 -->
-    <frame name="start_position_5">
+    <!-- Waypoint: node_11 -->
+    <frame name="node_11">
       <pose>-16.4000 15.2000 0.1000 0.0000 0.0000 -0.8727</pose>
     </frame>
 
-    <!-- Waypoint: start_position_6 -->
-    <frame name="start_position_6">
-      <pose>-1.7010 -0.0146 0.1000 0.0000 0.0000 3.1416</pose>
+    <!-- Waypoint: Node_1 -->
+    <frame name="Node_1">
+      <pose>0.6300 0.0700 0.1000 0.0000 0.0000 3.1416</pose>
     </frame>
 
-    <!-- Waypoint: waypoint_7 -->
-    <frame name="waypoint_7">
-      <pose>-6.5936 -2.1331 0.1000 0.0000 0.0000 -2.2217</pose>
+    <!-- Waypoint: node_2 -->
+    <frame name="node_2">
+      <pose>-5.1000 0.0900 0.1000 0.0000 0.0000 -2.2216</pose>
     </frame>
 
-    <!-- Waypoint: waypoint_8 -->
-    <frame name="waypoint_8">
-      <pose>9.1600 0.0000 0.1000 0.0000 0.0000 0.0000</pose>
+    <!-- Waypoint: node_8 -->
+    <frame name="node_8">
+      <pose>13.0600 0.1100 0.1000 0.0000 0.0000 0.0000</pose>
     </frame>
 
-    <!-- Waypoint: waypoint_9 -->
-    <frame name="waypoint_9">
-      <pose>9.1200 7.0400 0.1000 0.0000 0.0000 0.0000</pose>
+    <!-- Waypoint: node_7 -->
+    <frame name="node_7">
+      <pose>13.0200 7.0000 0.1000 0.0000 0.0000 0.0000</pose>
+    </frame>
+
+    <!-- Waypoint: node_5 -->
+    <frame name="node_5">
+      <pose>0.1500 11.6000 0.1000 0.0000 0.0000 -1.5019</pose>
+    </frame>
+
+    <!-- Waypoint: node_10 -->
+    <frame name="node_10">
+      <pose>13.0700 14.3600 0.1000 0.0000 0.0000 -1.5980</pose>
+    </frame>
+
+    <!-- Waypoint: node_9 -->
+    <frame name="node_9">
+      <pose>13.1000 -6.5400 0.1000 0.0000 0.0000 1.6207</pose>
     </frame>
 
   </world>

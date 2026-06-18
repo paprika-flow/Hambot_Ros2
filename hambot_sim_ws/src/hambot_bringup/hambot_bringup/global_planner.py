@@ -29,11 +29,11 @@ def calculate_relative_angle(prev_node, curr_node, next_node):
 def assign_directions_dynamically(nb_angles):
     left_nodes, straight_nodes, right_nodes = [], [], []
     for angle, node in nb_angles:
-        if -30 <= angle <= 30:
+        if -20 <= angle <= 20:
             straight_nodes.append((angle, node))
-        elif 30 < angle < 150:
+        elif 20 < angle :
             left_nodes.append((angle, node))
-        elif -150 < angle < -30:
+        elif angle < -20:
             right_nodes.append((angle, node))
         else:
             if angle >= 150: left_nodes.append((angle, node))

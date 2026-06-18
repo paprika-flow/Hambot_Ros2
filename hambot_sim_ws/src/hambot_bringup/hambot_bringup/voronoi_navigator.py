@@ -264,7 +264,7 @@ class VoronoiNavigator(Node):
         
         self.declare_parameter('split_turn_kp', 0.22)                       
         self.declare_parameter('split_turn_kd', 0.1)                       
-        self.declare_parameter('consecutive_frames_threshold_in', 15) 
+        self.declare_parameter('consecutive_frames_threshold_in', 5) 
         self.declare_parameter('consecutive_frames_threshold_out', 5)       
         self.declare_parameter('way_area_threshold', 6000.0)
         
