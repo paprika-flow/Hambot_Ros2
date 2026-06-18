@@ -548,7 +548,7 @@ class VoronoiNavigator(Node):
             self.classify_current_frame_ways(area_left, area_right, candidate_paths)
 
         if self.nav_state == self.STATE_HANDLING_SPLIT:
-            any_area_big = (avg_left >= self.split_exit_area_threshold  and avg_right >= self.split_exit_area_threshold )
+            any_area_big = (avg_left >= self.split_exit_area_threshold  or avg_right >= self.split_exit_area_threshold )
         else:
             any_area_big = (area_left >= self.split_entry_area_threshold or area_right >= self.split_entry_area_threshold)
         

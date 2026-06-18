@@ -160,12 +160,11 @@ class GlobalPlannerNode(Node):
         super().__init__('global_planner')
         
         self.declare_parameter('world_name', 'campus_sidewalk')
-        self.declare_parameter('start_node', '0')
-        self.declare_parameter('end_node', '19')
-        
         self.world_name = self.get_parameter('world_name').value
-        self.start_node_str = self.get_parameter('start_node').value
-        self.end_node_str = self.get_parameter('end_node').value
+
+        # Use flexible declarations to prevent crashing on integer vs string parameter types
+        self.start_node_str = self.declare_flexible_node_parameter('start_node', 0)
+        self.end_node_str = self.declare_flexible_node_parameter('end_node', 19)
         
         # Build Map Structure Dynamically from SDF
         self.map = Map()
@@ -186,6 +185,25 @@ class GlobalPlannerNode(Node):
         # Start repeat action timer to ensure robust dynamic reception
         self.timer = self.create_timer(1.0, self.publish_current_target)
         self.get_logger().info("Global topological pathplanner coordinator online.")
+
+    def declare_flexible_node_parameter(self, name, default_val_int):
+        """
+        Robustly declares parameters to handle command-line inputs 
+        evaluated as either integer types or string types in ROS 2.
+        """
+        try:
+            # Try to declare as integer
+            self.declare_parameter(name, int(default_val_int))
+            val = self.get_parameter(name).value
+            return str(val)
+        except Exception:
+            try:
+                # Fallback to string declaration
+                self.declare_parameter(name, str(default_val_int))
+                val = self.get_parameter(name).value
+                return str(val)
+            except Exception:
+                return str(default_val_int)
 
     def load_sdf_geometry(self):
         pkg_bringup = get_package_share_directory('hambot_bringup')
