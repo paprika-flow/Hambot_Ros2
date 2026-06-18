@@ -10,9 +10,12 @@ services:
     volumes:
       - /dev:/dev
       - /sys:/sys
-      - .:/workspace     # Mounts the whole folder to preserve the colcon build/install cache on the host
+      - ./src:/workspace/src  # Only mount the source code folder
+      - /workspace/build       # Keeps heavy build I/O local to container filesystem
+      - /workspace/install     # Keeps heavy install I/O local to container filesystem
+      - /workspace/log         # Prevents continuous logging from wearing out host disk
     environment:
-      - ROS_DOMAIN_ID=30 # Keeps traffic isolated to your robot
-      - RMW_IMPLEMENTATION=rmw_cyclonedds_cpp # Switches to the highly stable CycloneDDS middleware
+      - ROS_DOMAIN_ID=30 
+      - RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
     working_dir: /workspace
     command: sleep infinity
