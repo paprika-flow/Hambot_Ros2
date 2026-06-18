@@ -580,11 +580,6 @@
       <pose>30.0800 2.8900 0.1000 0.0000 0.0000 1.8968</pose>
     </frame>
 
-    <!-- Waypoint: waypoint_16 -->
-    <frame name="waypoint_16">
-      <pose>30.2979 3.2986 0.1000 0.0000 0.0000 0.0000</pose>
-    </frame>
-
     <!-- Waypoint: node_20 -->
     <frame name="node_20">
       <pose>49.7700 7.7200 0.1000 0.0000 0.0000 1.5818</pose>
