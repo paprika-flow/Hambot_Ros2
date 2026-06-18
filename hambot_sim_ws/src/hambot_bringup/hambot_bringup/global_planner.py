@@ -162,17 +162,16 @@ class GlobalPlannerNode(Node):
         self.declare_parameter('world_name', 'campus_sidewalk')
         self.world_name = self.get_parameter('world_name').value
 
-        # Use flexible declarations to prevent crashing on integer vs string parameter types
         self.start_node_str = self.declare_flexible_node_parameter('start_node', 0)
         self.end_node_str = self.declare_flexible_node_parameter('end_node', 19)
         
-        # Build Map Structure Dynamically from SDF
+        # Build Map Structure (Calculated strictly once during setup)
         self.map = Map()
         self.load_sdf_geometry()
         
-        # Compute Path
+        # Compute Path (Calculated strictly once during setup)
         self.path = []
-        self.turn_sequence = []  # List of tuples: (at_node_name, direction_to_take)
+        self.turn_sequence = []  
         self.current_turn_index = 0
         self.compute_global_plan()
         
@@ -182,23 +181,20 @@ class GlobalPlannerNode(Node):
             String, '/global_planner/turn_completed', self.feedback_callback, 10
         )
         
-        # Start repeat action timer to ensure robust dynamic reception
-        self.timer = self.create_timer(1.0, self.publish_current_target)
-        self.get_logger().info("Global topological pathplanner coordinator online.")
+        # Dispatch the first target layout immediately on startup
+        self.publish_current_target()
+        
+        # Background heartbeat safety timer (Reduced to 3.0s to minimize CPU load & DDS traffic)
+        self.timer = self.create_timer(3.0, self.publish_current_target)
+        self.get_logger().info("Event-driven high-efficiency global planner initialized.")
 
     def declare_flexible_node_parameter(self, name, default_val_int):
-        """
-        Robustly declares parameters to handle command-line inputs 
-        evaluated as either integer types or string types in ROS 2.
-        """
         try:
-            # Try to declare as integer
             self.declare_parameter(name, int(default_val_int))
             val = self.get_parameter(name).value
             return str(val)
         except Exception:
             try:
-                # Fallback to string declaration
                 self.declare_parameter(name, str(default_val_int))
                 val = self.get_parameter(name).value
                 return str(val)
@@ -217,7 +213,6 @@ class GlobalPlannerNode(Node):
         root = tree.getroot()
         world = root.find('world')
         
-        # 1. Parse Waypoints
         raw_frames = []
         for frame in world.findall('frame'):
             name = frame.attrib['name']
@@ -225,7 +220,6 @@ class GlobalPlannerNode(Node):
             x, y = float(pose_text[0]), float(pose_text[1])
             raw_frames.append({'name': name, 'x': x, 'y': y})
             
-        # 2. Cleanup Spatially Duplicate Waypoints
         cleaned_frames = []
         for f in raw_frames:
             merged = False
@@ -236,7 +230,6 @@ class GlobalPlannerNode(Node):
             if not merged:
                 cleaned_frames.append(f)
                 
-        # 3. Add Unique Nodes to Graph
         node_id_mapping = {}
         import re
         for f in cleaned_frames:
@@ -245,7 +238,6 @@ class GlobalPlannerNode(Node):
             node_id_mapping[f['name']] = idx_str
             self.map.add_node(idx_str, f['x'], f['y'])
             
-        # 4. Extract Sidewalk Corridor Links
         sidewalk_model = None
         for model in world.findall('model'):
             if model.attrib.get('name') == 'sidewalk_network':
@@ -253,7 +245,7 @@ class GlobalPlannerNode(Node):
                 break
                 
         if sidewalk_model is None:
-            self.get_logger().error("Model 'sidewalk_network' not found inside the specified SDF world.")
+            self.get_logger().error("Model 'sidewalk_network' not found inside the specified world.")
             return
             
         segments = []
@@ -271,12 +263,10 @@ class GlobalPlannerNode(Node):
             
             segments.append({'name': link_name, 'ax': ax, 'ay': ay, 'bx': bx, 'by': by, 'width': width})
             
-        # 5. Project Nodes onto Corridor Geometry to build Interconnections
         segment_nodes_map = {seg['name']: [] for seg in segments}
         for node in self.map.all_nodes:
             if node is None: continue
             for seg in segments:
-                # Segment Projection
                 abx, aby = seg['bx'] - seg['ax'], seg['by'] - seg['ay']
                 apx, apy = node.x - seg['ax'], node.y - seg['ay']
                 ab_len_sq = abx**2 + aby**2
@@ -291,7 +281,6 @@ class GlobalPlannerNode(Node):
                 if dist <= (seg['width'] / 2.0 + 0.3):
                     segment_nodes_map[seg['name']].append((t_clamped, node))
                     
-        # 6. Establish Segment Edges sequentially
         for nodes_list in segment_nodes_map.values():
             if len(nodes_list) < 2: continue
             nodes_list.sort(key=lambda item: item[0])
@@ -320,7 +309,6 @@ class GlobalPlannerNode(Node):
         path_names = [n.name for n in path]
         self.get_logger().info(f"Dijkstra computed global trajectory: {path_names} (Distance: {dist:.2f}m)")
         
-        # Translate Node Steps to relative Turn Sequences
         self.turn_sequence = []
         for i in range(1, len(path) - 1):
             prev_node = path[i-1]
@@ -350,8 +338,11 @@ class GlobalPlannerNode(Node):
                 node_name, turn_dir = self.turn_sequence[self.current_turn_index]
                 self.get_logger().info(f"COORDINATION_UPDATE: Split action '{turn_dir.upper()}' at Node {node_name} completed.")
                 
-                # Advance step index
+                # 1. Advance step index
                 self.current_turn_index += 1
+                
+                # 2. IMMEDIATELY dispatch next target target to eliminate polling latency
+                self.publish_current_target()
                 
                 if self.current_turn_index < len(self.turn_sequence):
                     next_node, next_dir = self.turn_sequence[self.current_turn_index]
@@ -364,7 +355,6 @@ class GlobalPlannerNode(Node):
     def publish_current_target(self):
         msg = String()
         
-        # Ensure we have a valid calculated route path
         if not self.path or len(self.path) < 2:
             msg.data = "stop"
             self.target_dir_pub.publish(msg)
@@ -374,22 +364,21 @@ class GlobalPlannerNode(Node):
             _, turn_dir = self.turn_sequence[self.current_turn_index]
             msg.data = turn_dir
             
-            # Estimate and print the current edge the robot is traversing
             k = self.current_turn_index
             if k < len(self.path) - 1:
                 node_a = self.path[k]
                 node_b = self.path[k+1]
+                # Log on a slow 5.0-second throttle to save CPU cycles
                 self.get_logger().info(
                     f"TRACKER: Robot is traversing edge {node_a.name} <-> {node_b.name}. Next turn decision at Node {node_b.name} is '{turn_dir.upper()}'",
-                    throttle_duration_sec=3.0
+                    throttle_duration_sec=5.0
                 )
         else:
-            # We have cleared all active turns. We are traversing the final straight section
             node_a = self.path[-2]
             node_b = self.path[-1]
             self.get_logger().info(
                 f"TRACKER: Robot is on the final straight section {node_a.name} <-> {node_b.name} approaching target.",
-                throttle_duration_sec=3.0
+                throttle_duration_sec=5.0
             )
             msg.data = "straight"
             
@@ -412,7 +401,7 @@ if __name__ == '__main__':
 
 '''
 ros2 launch hambot_bringup voronoi_launch.py \
-  world_name:=campus_sidewalk \
+  world_name:=the_map \
   start_point:=1 \
   start_node:=0 \
   end_node:=19
