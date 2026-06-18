@@ -97,13 +97,13 @@
       <link name="segment_0">
         <pose>-5.6014 60.4403 0.0 0 0 -1.5678</pose>
         <collision name="col">
-          <pose>20.6131 0 0.0250 0 0 0</pose>
+          <pose>20.6132 0 0.0250 0 0 0</pose>
           <geometry>
             <box><size>41.2263 1.2000 0.0500</size></box>
           </geometry>
         </collision>
         <visual name="vis">
-          <pose>20.6131 0 0.0250 0 0 0</pose>
+          <pose>20.6132 0 0.0250 0 0 0</pose>
           <geometry>
             <box><size>41.2263 1.2000 0.0500</size></box>
           </geometry>
@@ -289,13 +289,13 @@
       <link name="segment_8">
         <pose>-28.4789 50.7147 0.0 0 0 -1.0971</pose>
         <collision name="col">
-          <pose>25.0518 0 0.0250 0 0 0</pose>
+          <pose>25.0517 0 0.0250 0 0 0</pose>
           <geometry>
             <box><size>50.1035 1.2000 0.0500</size></box>
           </geometry>
         </collision>
         <visual name="vis">
-          <pose>25.0518 0 0.0250 0 0 0</pose>
+          <pose>25.0517 0 0.0250 0 0 0</pose>
           <geometry>
             <box><size>50.1035 1.2000 0.0500</size></box>
           </geometry>
@@ -313,13 +313,13 @@
       <link name="segment_9">
         <pose>-11.3637 16.3647 0.0 0 0 0.5021</pose>
         <collision name="col">
-          <pose>3.5224 0 0.0250 0 0 0</pose>
+          <pose>3.5225 0 0.0250 0 0 0</pose>
           <geometry>
             <box><size>7.0449 1.2000 0.0500</size></box>
           </geometry>
         </collision>
         <visual name="vis">
-          <pose>3.5224 0 0.0250 0 0 0</pose>
+          <pose>3.5225 0 0.0250 0 0 0</pose>
           <geometry>
             <box><size>7.0449 1.2000 0.0500</size></box>
           </geometry>
@@ -505,9 +505,114 @@
     <!-- ========================================== -->
     <!-- 5. PREDEFINED SPAWN POINTS                 -->
     <!-- ========================================== -->
-    <!-- Waypoint: waypoint_1 -->
-    <frame name="waypoint_1">
-      <pose>-5.5239 58.8458 0.1000 0.0000 0.0000 -1.5964</pose>
+    <!-- Waypoint: node_0 -->
+    <frame name="node_0">
+      <pose>-5.5700 59.7900 0.1000 0.0000 0.0000 -1.5965</pose>
+    </frame>
+
+    <!-- Waypoint: node_5 -->
+    <frame name="node_5">
+      <pose>-28.2100 50.0800 0.1000 0.0000 0.0000 -1.0912</pose>
+    </frame>
+
+    <!-- Waypoint: node_1 -->
+    <frame name="node_1">
+      <pose>-5.5700 48.0000 0.1000 0.0000 0.0000 0.0000</pose>
+    </frame>
+
+    <!-- Waypoint: node_2 -->
+    <frame name="node_2">
+      <pose>9.1000 57.5500 0.1000 0.0000 0.0000 -1.5668</pose>
+    </frame>
+
+    <!-- Waypoint: node_3 -->
+    <frame name="node_3">
+      <pose>9.1300 47.7300 0.1000 0.0000 0.0000 -1.5668</pose>
+    </frame>
+
+    <!-- Waypoint: node_4 -->
+    <frame name="node_4">
+      <pose>9.1300 34.8600 0.1000 0.0000 0.0000 -1.5668</pose>
+    </frame>
+
+    <!-- Waypoint: node_6 -->
+    <frame name="node_6">
+      <pose>-5.5400 35.1400 0.1000 0.0000 0.0000 -1.5668</pose>
+    </frame>
+
+    <!-- Waypoint: node_9 -->
+    <frame name="node_9">
+      <pose>-5.2800 19.6299 0.1000 0.0000 0.0000 -0.0656</pose>
+    </frame>
+
+    <!-- Waypoint: node_7 -->
+    <frame name="node_7">
+      <pose>-20.2400 34.8100 0.1000 0.0000 0.0000 -1.2017</pose>
+    </frame>
+
+    <!-- Waypoint: node_8 -->
+    <frame name="node_8">
+      <pose>-10.9200 16.5500 0.1000 0.0000 0.0000 -1.1807</pose>
+    </frame>
+
+    <!-- Waypoint: node_14 -->
+    <frame name="node_14">
+      <pose>26.1495 15.2000 0.1000 0.0000 0.0000 1.8968</pose>
+    </frame>
+
+    <!-- Waypoint: node_10 -->
+    <frame name="node_10">
+      <pose>9.3700 17.4300 0.1000 0.0000 0.0000 3.0768</pose>
+    </frame>
+
+    <!-- Waypoint: node_11 -->
+    <frame name="node_11">
+      <pose>-5.8800 6.5300 0.1000 0.0000 0.0000 2.1598</pose>
+    </frame>
+
+    <!-- Waypoint: node_12 -->
+    <frame name="node_12">
+      <pose>9.2200 -0.1300 0.1000 0.0000 0.0000 1.5404</pose>
+    </frame>
+
+    <!-- Waypoint: node_13 -->
+    <frame name="node_13">
+      <pose>30.0800 2.8900 0.1000 0.0000 0.0000 1.8968</pose>
+    </frame>
+
+    <!-- Waypoint: waypoint_16 -->
+    <frame name="waypoint_16">
+      <pose>30.2979 3.2986 0.1000 0.0000 0.0000 0.0000</pose>
+    </frame>
+
+    <!-- Waypoint: node_20 -->
+    <frame name="node_20">
+      <pose>49.7700 7.7200 0.1000 0.0000 0.0000 1.5818</pose>
+    </frame>
+
+    <!-- Waypoint: node_15 -->
+    <frame name="node_15">
+      <pose>23.2900 26.6600 0.1000 0.0000 0.0000 -0.2222</pose>
+    </frame>
+
+    <!-- Waypoint: node_16 -->
+    <frame name="node_16">
+      <pose>35.5500 26.5600 0.1000 0.0000 0.0000 -0.0251</pose>
+    </frame>
+
+    <!-- Waypoint: node_17 -->
+    <frame name="node_17">
+      <pose>35.6100 32.6500 0.1000 0.0000 0.0000 -1.6506</pose>
+    </frame>
+
+    <!-- Waypoint: node_18 -->
+    <frame name="node_18">
+      <pose>49.5800 26.7200 0.1000 0.0000 0.0000 -3.1287</pose>
+    </frame>
+
+    <!-- Waypoint: node_19 -->
+    <frame name="node_19">
+      <pose>67.5800 26.7700 0.1000 0.0000 0.0000 -3.1287</pose>
     </frame>
 
   </world>
