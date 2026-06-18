@@ -16,8 +16,6 @@ def parse_spawn_points(world_path):
     with open(world_path) as f:
         content = f.read()
 
-    # Generalized to capture any name prefix ending with _<number>, 
-    # supporting 'start_position_N', 'waypoint_N', 'start_point_N', etc.
     pattern = (
         r'<frame\s+name="[a-zA-Z_]+_(\d+)"[^>]*>\s*'
         r'<pose>([\d.-]+)\s+([\d.-]+)\s+([\d.-]+)\s+[\d.-]+\s+[\d.-]+\s+([\d.-]+)</pose>'
@@ -40,8 +38,6 @@ def parse_spawn_points(world_path):
 
 def spawn_robot_action(context):
     pkg_bringup = get_package_share_directory('hambot_bringup')
-    
-    # Dynamically retrieve the chosen world file name
     world_name = LaunchConfiguration('world_name').perform(context)
     world_file = os.path.join(pkg_bringup, 'worlds', f"{world_name}.sdf")
     
@@ -55,7 +51,6 @@ def spawn_robot_action(context):
         idx = max(1, min(idx, num_points))  
         pose = points[idx - 1]  
     else:
-        # Safe fallback in case no matching frames are found in the SDF
         pose = {'x': 0.0, 'y': 0.0, 'z': 0.1, 'yaw': 0.0}
 
     return [
@@ -83,25 +78,30 @@ def generate_launch_description():
     # 1. World Config Launch Arguments
     world_name_arg = DeclareLaunchArgument(
         'world_name',
-        default_value='noSplit',
+        default_value='campus_sidewalk',
         description='Name of the world file to load (without .sdf extension)'
     )
-
-    # Use the default world to safely generate static launch argument descriptions
-    default_world_file = os.path.join(pkg_bringup, 'worlds', 'noSplit.sdf')
-    default_points = parse_spawn_points(default_world_file)
-    num_points = len(default_points) if default_points else 1
 
     start_point_arg = DeclareLaunchArgument(
         'start_point',
         default_value='1',
-        description=(
-            f'Spawn point index. Parsed automatically from the SDF file. '
-            f'Default=1.'
-        )
+        description='Spawn point index. Parsed automatically from the SDF file. Default=1.'
     )
 
-    # Default model path pointing to inside the shared bringup directory
+    # Topological Route Parameters
+    start_node_arg = DeclareLaunchArgument(
+        'start_node',
+        default_value='0',
+        description='Starting topological node ID for route planning.'
+    )
+
+    end_node_arg = DeclareLaunchArgument(
+        'end_node',
+        default_value='19',
+        description='Target topological destination node ID.'
+    )
+
+    # Default model path
     default_model_path = os.path.join(
         get_package_share_directory('hambot_bringup'),
         'models',
@@ -114,7 +114,6 @@ def generate_launch_description():
         description='Absolute path to the trained scikit-learn pipeline (.pkl)'
     )
 
-    # DATASET COLLECTION LAUNCH ARGUMENTS
     collect_data_arg = DeclareLaunchArgument(
         'collect_data',
         default_value='false',
@@ -129,7 +128,6 @@ def generate_launch_description():
         description='Target directory mapping: "straight" or "split"'
     )
 
-    # Dynamic save directory resolving based on the chosen mode
     save_directory_expr = PythonExpression([
         "'processed_rosmaster_photos_splits/processed_rosmaster_photos_splits/mask' if '",
         LaunchConfiguration('dataset_mode'),
@@ -149,7 +147,6 @@ def generate_launch_description():
         }]
     )
 
-    # Concatenate -r, path, and world configuration via a PythonExpression
     gz_args_expr = PythonExpression([
         "'-r ' + '", pkg_bringup, "/worlds/' + '", LaunchConfiguration('world_name'), "' + '.sdf'"
     ])
@@ -210,16 +207,38 @@ def generate_launch_description():
         output='screen',
         parameters=[{
             'use_sim_time': True,
-            'kp_lateral': 1.2,
-            'kp_heading': 1.5,
-            'target_linear_speed': 0.22,
-            'max_angular_speed': 1.0,
+            'kp_area': 0.25,
+            'kd_area': 0.05,
+            'kp_pos': 0.2,
+            'kd_pos': 0.05,
+            'kp_side': 0.25,
+            'kd_side': 0.025,
+            'target_linear_speed': 0.16,
+            'max_angular_speed': 0.15,
             'obstacle_threshold': 0.45,  
-            'forward_fov_deg': 40.0      
+            'forward_fov_deg': 40.0,
+            'split_threshold': 0.6,
+            'min_split_duration': 7.0,
+            'way_area_threshold': 6000.0,
+            'split_direction': 'straight' # overridden dynamically by topic
         }]
     )
 
-    # DATASET COLLECTOR NODE (Runs only when collect_data is true)
+    # =====================================================================
+    # GLOBAL PLANNER INTEGRATION
+    # =====================================================================
+    global_planner = Node(
+        package='hambot_bringup',
+        executable='global_planner.py',
+        output='screen',
+        parameters=[{
+            'use_sim_time': True,
+            'world_name': LaunchConfiguration('world_name'),
+            'start_node': LaunchConfiguration('start_node'),
+            'end_node': LaunchConfiguration('end_node')
+        }]
+    )
+
     dataset_collector = Node(
         package='hambot_bringup',
         executable='dataset_collector.py',
@@ -227,8 +246,8 @@ def generate_launch_description():
         parameters=[{
             'use_sim_time': True,
             'save_directory': save_directory_expr,
-            'save_interval': 1.0,           # Saves 1 frame per second
-            'target_gray_value': 15         # Matches initargs=(15, ...) inside extract script
+            'save_interval': 1.0,           
+            'target_gray_value': 15         
         }],
         condition=IfCondition(LaunchConfiguration('collect_data'))
     )
@@ -236,6 +255,8 @@ def generate_launch_description():
     return LaunchDescription([
         world_name_arg,
         start_point_arg,
+        start_node_arg,
+        end_node_arg,
         model_path_arg,
         collect_data_arg,
         dataset_mode_arg,
@@ -246,5 +267,6 @@ def generate_launch_description():
         sidewalk_segmenter,
         voronoi_path_planner,
         voronoi_navigator,
+        global_planner,
         dataset_collector
     ])

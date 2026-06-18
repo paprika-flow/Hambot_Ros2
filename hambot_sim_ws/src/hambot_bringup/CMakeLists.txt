@@ -33,6 +33,7 @@ install(PROGRAMS
   hambot_bringup/costmap_navigator.py
   hambot_bringup/voronoi_navigator.py 
   hambot_bringup/dataset_collector.py
+  hambot_bringup/global_planner.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
