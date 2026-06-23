@@ -312,9 +312,12 @@ class VoronoiNavigator(Node):
 
         self.genuine_split_confirmed = False
         self.target_area_observed_high = False
-
-        # Sidewalk pixel monitoring variables
-        self.initial_sidewalk_pixels = None
+        self.declare_parameter('stop_pixel_threshold', 40000.0)  # Stop threshold for end node (dead end)
+        # Variables for stop conditions
+        self.latest_dest_type = "none"
+        self.initial_sidewalk_pixels = None  # Tracks baseline to ensure initialization checks clear
+        self.split_baseline_pixels = None
+        self.capture_split_baseline = False
         self.current_sidewalk_pixels = 0.0
 
         # Initialize Control Engine with decoupling parameters
@@ -418,6 +421,10 @@ class VoronoiNavigator(Node):
         self.scan_sub = self.create_subscription(
             LaserScan, '/scan', self.scan_callback, self.latest_only_qos, callback_group=callback_group
         )
+        # ... (Subscribers section of __init__)
+        self.dest_type_sub = self.create_subscription(
+            String, '/global_planner/destination_type', self.destination_type_callback, 10, callback_group=callback_group
+        )
         
         self.get_logger().info("Voronoi Navigator initialized with Dynamic Angular scaling.")
 
@@ -431,11 +438,18 @@ class VoronoiNavigator(Node):
             
             with self.lock:
                 self.current_sidewalk_pixels = current_pixels
+                
+                # Check general run initialization calibration
                 if self.initial_sidewalk_pixels is None or self.initial_sidewalk_pixels == 0.0:
-                    # Ignore corrupted or blank startup frames
                     if current_pixels > 1000.0:
                         self.initial_sidewalk_pixels = current_pixels
-                        self.get_logger().info(f"CALIBRATION: Initial sidewalk baseline calibrated to {self.initial_sidewalk_pixels} pixels.")
+                
+                # Only capture the split baseline value when triggered on state transition
+                if self.capture_split_baseline:
+                    if current_pixels > 1000.0:
+                        self.split_baseline_pixels = current_pixels
+                        self.capture_split_baseline = False
+                        self.get_logger().info(f"CALIBRATION: Split baseline captured asynchronously: {self.split_baseline_pixels} pixels.")
         except Exception as e:
             self.get_logger().error(f"Error parsing sidewalk mask: {str(e)}")
 
@@ -446,6 +460,11 @@ class VoronoiNavigator(Node):
                 if self.active_split_direction != direction:
                     self.active_split_direction = direction
                     self.get_logger().info(f"COORDINATION: Split direction updated dynamically to -> {direction.upper()}")
+
+    def destination_type_callback(self, msg: String):
+        """Processes the upcoming target node type from the global planner."""
+        with self.lock:
+            self.latest_dest_type = msg.data.lower()
 
     def scan_callback(self, msg: LaserScan):
         angle_min = msg.angle_min
@@ -592,17 +611,55 @@ class VoronoiNavigator(Node):
             split_avg = sum(list(self.split_history)[:-15]) / 10.0 if history_length >= 25 else 0.0
 
             current_px = self.current_sidewalk_pixels
+            split_baseline_px = self.split_baseline_pixels
+            nav_state = self.nav_state
+            
             initial_px = self.initial_sidewalk_pixels
+            dest_type = self.latest_dest_type
 
-        # Compute dynamic max angular limit: scaling increases as pixel count decreases
-        if initial_px is not None and initial_px > 0.0:
-            ratio = current_px / initial_px
+        # =====================================================================
+        # TARGET DESTINATION REACHED - SYSTEM TERMINATION CONDITIONS
+        # =====================================================================
+        if dest_type == "end_node":
+            # Must ensure node has successfully calibrated a general running baseline first
+            if initial_px is not None and current_px < self.get_parameter('stop_pixel_threshold').value:
+                self.get_logger().info(f"STOP CONDITION: Reached End Node destination. Pixels ({current_px:.1f}) below threshold. Shutting down.")
+                
+                # Notify global planner to terminate as well
+                completion_msg = String()
+                completion_msg.data = "reached_destination"
+                self.turn_completed_pub.publish(completion_msg)
+                
+                self.publish_stop_cmd()
+                rclpy.shutdown()
+                return
+
+        elif dest_type == "split_node" and nav_state == self.STATE_HANDLING_SPLIT:
+            self.get_logger().info("STOP CONDITION: Reached Split Node destination and entered [STATE_HANDLING_SPLIT]. Shutting down.")
+            
+            # Notify global planner to terminate as well
+            completion_msg = String()
+            completion_msg.data = "reached_destination"
+            self.turn_completed_pub.publish(completion_msg)
+            
+            self.publish_stop_cmd()
+            rclpy.shutdown()
+            return
+
+        # =====================================================================
+        # CONTINUOUS VORONOI CONTROL CALCULATIONS (REST OF THE METHOD)
+        # =====================================================================
+       
+        # Scale angular limits ONLY when active split execution is underway
+        if nav_state == self.STATE_HANDLING_SPLIT and split_baseline_px is not None and split_baseline_px > 0.0:
+            ratio = current_px / split_baseline_px 
             ratio = max(0.01, min(1.0, ratio)) # Clamp ratio to safe bounds
             
-            # Linear scaling relation: increases up to limit_max_angular as ratio drops
-            dynamic_max_angular = base_max_angular * (1.0 + alpha * (1.0 - ratio))
+            # Dynamic max speed scales up as ratio drops below 1.0 (indicating loss of concrete surface)
+            dynamic_max_angular = base_max_angular * (0.65 + alpha * (1.0 - ratio))
             dynamic_max_angular = min(limit_max_angular, dynamic_max_angular)
         else:
+            # Fall back to baseline for normal centered navigation
             dynamic_max_angular = base_max_angular
 
         # Assign calculated max angular constraint directly to control engine
@@ -650,6 +707,17 @@ class VoronoiNavigator(Node):
                     self.split_handling_start_time = time.time()
                     self.genuine_split_confirmed = False
                     self.target_area_observed_high = False
+                    
+                    # Capture current split baseline immediately or signal next frame capture
+                    with self.lock:
+                        if self.current_sidewalk_pixels > 1000.0:
+                            self.split_baseline_pixels = self.current_sidewalk_pixels
+                            self.capture_split_baseline = False
+                            self.get_logger().info(f"CALIBRATION: Split baseline captured immediately: {self.split_baseline_pixels} pixels.")
+                        else:
+                            self.split_baseline_pixels = None
+                            self.capture_split_baseline = True
+
                     self.get_logger().info(f"STATE TRANSITION: [NORMAL] -> [HANDLING SPLIT] (Dir: {split_direction.upper()})")
                     self.log_final_split_summary()
                 else:
@@ -662,8 +730,20 @@ class VoronoiNavigator(Node):
                 self.split_handling_start_time = time.time()
                 self.genuine_split_confirmed = False
                 self.target_area_observed_high = False
+                
+                # Capture current split baseline immediately or signal next frame capture
+                with self.lock:
+                    if self.current_sidewalk_pixels > 1000.0:
+                        self.split_baseline_pixels = self.current_sidewalk_pixels
+                        self.capture_split_baseline = False
+                        self.get_logger().info(f"CALIBRATION: Split baseline captured immediately: {self.split_baseline_pixels} pixels.")
+                    else:
+                        self.split_baseline_pixels = None
+                        self.capture_split_baseline = True
+
                 self.get_logger().info(f"STATE TRANSITION: [SPLIT AHEAD] -> [HANDLING SPLIT] (Dir: {split_direction.upper()})")
                 self.log_final_split_summary()
+            
             elif split_avg < self.split_threshold:
                 self.nav_state = self.STATE_NORMAL
                 self.get_logger().info("STATE TRANSITION: [SPLIT AHEAD] -> [NORMAL]")
@@ -768,7 +848,7 @@ class VoronoiNavigator(Node):
         
         self.get_logger().info(
             f"Areas -> L: {area_left:6.1f} | R: {area_right:6.1f} | "
-            f"Sidewalk Px: {current_px:.0f} / {initial_px if initial_px is not None else 0.0:.0f} | "
+            f"Sidewalk Px: {current_px:.0f} / {split_baseline_px if split_baseline_px is not None else 0.0:.0f} | "
             f"Max Ang: {dynamic_max_angular:.3f} | "
             f"{prob_str} {status_str} | Cmd Angular: {angular_vel:6.3f} rad/s",
             throttle_duration_sec=0.2
@@ -785,6 +865,7 @@ class VoronoiNavigator(Node):
 
 
 def main(args=None):
+    import rclpy
     rclpy.init(args=args)
     node = VoronoiNavigator()
     executor = MultiThreadedExecutor()
@@ -794,10 +875,11 @@ def main(args=None):
     except KeyboardInterrupt:
         pass
     finally:
-        node.publish_stop_cmd()
-        node.destroy_node()
-        rclpy.shutdown()
-
+        # Guard cleanup to prevent RCLError if ROS 2 has already shut down the context
+        if rclpy.ok():
+            node.publish_stop_cmd()
+            node.destroy_node()
+            rclpy.shutdown()
 
 if __name__ == '__main__':
     main()
