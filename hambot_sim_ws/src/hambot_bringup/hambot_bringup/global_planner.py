@@ -31,7 +31,7 @@ def assign_directions_dynamically(nb_angles):
     for angle, node in nb_angles:
         if -20 <= angle <= 20:
             straight_nodes.append((angle, node))
-        elif 20 < angle :
+        elif 20 < angle:
             left_nodes.append((angle, node))
         elif angle < -20:
             right_nodes.append((angle, node))

@@ -1,38 +1,45 @@
 #!/usr/bin/env python3
+
 import math
 import time
 import threading
 from collections import deque
+import numpy as np
+
+import rclpy
 from rclpy.node import Node
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
+from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
+
 from std_msgs.msg import Float32, String
 from geometry_msgs.msg import Twist, PoseArray
-from sensor_msgs.msg import LaserScan
-from rclpy.qos import QoSProfile, ReliabilityPolicy, HistoryPolicy
+from sensor_msgs.msg import LaserScan, Image
 
 # =====================================================================
 # BLENDED PID CONTROL ENGINE WITH TRANSITION-SAFE DERIVATIVES
 # =====================================================================
+
 class VoronoiNavigationEngine:
     def __init__(
         self, 
         kp_area: float = 0.025, 
         kd_area: float = 0.0125, 
-        kp_pos: float = 0.0,
-        kd_pos: float = 0.0,
-        kp_side: float = 0.025,
-        kd_side: float = 0.01,             
+        kp_pos: float = 0.0, 
+        kd_pos: float = 0.0, 
+        kp_side: float = 0.025, 
+        kd_side: float = 0.01,
         target_linear_speed: float = 0.16, 
         max_angular_speed: float = 0.1,
-        smoothing_factor: float = 0.07,   
-        area_normalization_scale: float = 50000.0,
+        smoothing_factor: float = 0.07,
+        area_normalization_scale: float = 50000.0, 
         image_width: float = 960.0,
-        area_deadband: float = 0.015,
-        pos_deadband: float = 0.03,
-        side_deadband: float = 0.03,
-        min_side_distance: float = 0.0,
-        deactivate_area_threshold: float = 700.0  
+        area_deadband: float = 0.015, 
+        pos_deadband: float = 0.03, 
+        side_deadband: float = 0.03, 
+        min_side_distance: float = 0.0, 
+        deactivate_area_threshold: float = 700.0,
+        angular_influence_on_linear: float = 0.3  # Parameterized decoupling factor
     ):
         self.kp_area = kp_area
         self.kd_area = kd_area
@@ -47,7 +54,8 @@ class VoronoiNavigationEngine:
         self.image_width = image_width
         self.min_side_distance = min_side_distance
         self.deactivate_area_threshold = deactivate_area_threshold
-        
+        self.angular_influence_on_linear = angular_influence_on_linear
+
         self.area_deadband = area_deadband
         self.pos_deadband = pos_deadband
         self.side_deadband = side_deadband
@@ -87,8 +95,7 @@ class VoronoiNavigationEngine:
             if dt <= 0:
                 dt = 0.001
 
-        # GLOBAL AREA DEACTIVATION: Sets areas to 0.0 if the corridor narrows below the threshold,
-        # affecting both normal corridor driving and active split-handling turn overrides.
+        # GLOBAL AREA DEACTIVATION
         if side_dist is not None and side_dist < self.deactivate_area_threshold:
             area_left = 0.0
             area_right = 0.0
@@ -101,8 +108,6 @@ class VoronoiNavigationEngine:
         if handling_split:
             error_area = 0.0
             error_side = 0.0
-            p_term_area = 0.0
-            p_term_side = 0.0
             
             error_pos = 0.0
             center_x = self.image_width / 2.0
@@ -117,7 +122,6 @@ class VoronoiNavigationEngine:
                 left_off_sidewalk = False
                 if side_valid:
                     left_x = side_mid_x - (side_dist / 2.0)
-                    # Triggered immediately if area_left is deactivated to 0.0
                     if left_x <= 10.0 or area_left <= 0.01:
                         left_off_sidewalk = True
                 
@@ -137,7 +141,6 @@ class VoronoiNavigationEngine:
                 right_off_sidewalk = False
                 if side_valid:
                     right_x = side_mid_x + (side_dist / 2.0)
-                    # Triggered immediately if area_right is deactivated to 0.0
                     if right_x >= (self.image_width - 10.0) or area_right <= 0.01:
                         right_off_sidewalk = True
                 
@@ -167,7 +170,6 @@ class VoronoiNavigationEngine:
             d_term = d_term_pos
 
         else:
-            # (Redundant deactivation check removed here as it is handled at the start)
             raw_diff = area_left - area_right
             error_area = raw_diff / self.area_normalization_scale
             if abs(error_area) < self.area_deadband:
@@ -214,17 +216,22 @@ class VoronoiNavigationEngine:
         self.prev_side_valid = side_valid
         self.prev_time = current_time
         
-        norm_correction = abs(raw_angular_vel) / self.max_angular_speed
-        speed_multiplier = max(0.3, 1.0 - norm_correction * 0.7)
+        # Coupled control scaling: Normalize angular velocity correction
+        norm_correction = abs(raw_angular_vel) / max(self.max_angular_speed, 1e-5)
         
-        base_speed = self.target_linear_speed * 1 if handling_split else self.target_linear_speed
+        # Reduced influence of angular velocity on linear velocity using parameter
+        speed_multiplier = max(0.3, 1.0 - norm_correction * self.angular_influence_on_linear)
+        
+        base_speed = self.target_linear_speed
         linear_vel = base_speed * speed_multiplier
         
         return linear_vel, self.smoothed_angular_vel
 
+
 # =====================================================================
 # ROS 2 WRAPPER NODE
 # =====================================================================
+
 class VoronoiNavigator(Node):
     STATE_NORMAL = 0
     STATE_SPLIT_AHEAD = 1
@@ -233,6 +240,7 @@ class VoronoiNavigator(Node):
     def __init__(self):
         super().__init__('voronoi_navigator')
         
+        # Existing Parameters
         self.declare_parameter('kp_area', 0.25)
         self.declare_parameter('kd_area', 0.05)
         self.declare_parameter('kp_pos', 0.2)
@@ -240,7 +248,7 @@ class VoronoiNavigator(Node):
         self.declare_parameter('kp_side', 0.25)
         self.declare_parameter('kd_side', 0.025)
         self.declare_parameter('target_linear_speed', 0.35)
-        self.declare_parameter('max_angular_speed', 0.13)
+        self.declare_parameter('max_angular_speed', 0.08)  # Reduced baseline max angular speed
         self.declare_parameter('smoothing_factor', 0.15)
         self.declare_parameter('obstacle_threshold', 0.45)
         self.declare_parameter('forward_fov_deg', 40.0)
@@ -262,16 +270,22 @@ class VoronoiNavigator(Node):
         
         self.declare_parameter('split_direction', 'straight')       
         
-        self.declare_parameter('split_turn_kp', 0.22)                       
-        self.declare_parameter('split_turn_kd', 0.1)                       
+        self.declare_parameter('split_turn_kp', 0.17)                       
+        self.declare_parameter('split_turn_kd', 0.05)                       
         self.declare_parameter('consecutive_frames_threshold_in', 5) 
         self.declare_parameter('consecutive_frames_threshold_out', 5)       
         self.declare_parameter('way_area_threshold', 6000.0)
-        
-        # Reduced default verification window to be responsive in simulator
         self.declare_parameter('min_split_duration', 3.0)                
         self.declare_parameter('require_target_area_confirmation', True) 
 
+        # Dynamic Angular Adaptation Parameters
+        self.declare_parameter('target_gray', 255)
+        self.declare_parameter('sidewalk_mask_topic', '/camera/sidewalk_mask')
+        self.declare_parameter('max_angular_speed_limit', 0.22)          # Dynamic absolute ceiling
+        self.declare_parameter('angular_speed_scaling_factor', 1.8)       # Curve sharpness scaling factor (alpha)
+        self.declare_parameter('angular_influence_on_linear', 0.3)        # Decouple factor (was hardcoded to 0.7)
+
+        # Retrieve standard configurations
         self.split_threshold = self.get_parameter('split_threshold').value
         self.split_exit_prob_threshold = self.get_parameter('split_exit_prob_threshold').value
         self.split_entry_area_threshold = self.get_parameter('split_entry_area_threshold').value
@@ -299,6 +313,11 @@ class VoronoiNavigator(Node):
         self.genuine_split_confirmed = False
         self.target_area_observed_high = False
 
+        # Sidewalk pixel monitoring variables
+        self.initial_sidewalk_pixels = None
+        self.current_sidewalk_pixels = 0.0
+
+        # Initialize Control Engine with decoupling parameters
         self.engine = VoronoiNavigationEngine(
             kp_area=self.get_parameter('kp_area').value,
             kd_area=self.get_parameter('kd_area').value,
@@ -315,7 +334,8 @@ class VoronoiNavigator(Node):
             pos_deadband=self.get_parameter('pos_deadband').value,
             side_deadband=self.get_parameter('side_deadband').value,
             min_side_distance=self.get_parameter('min_side_distance').value,
-            deactivate_area_threshold=self.get_parameter('deactivate_area_threshold').value
+            deactivate_area_threshold=self.get_parameter('deactivate_area_threshold').value,
+            angular_influence_on_linear=self.get_parameter('angular_influence_on_linear').value
         )
         
         self.obstacle_threshold = self.get_parameter('obstacle_threshold').value
@@ -362,6 +382,15 @@ class VoronoiNavigator(Node):
             depth=1
         )
         
+        # New direct subscription to image mask to track total sidewalk content
+        self.mask_sub = self.create_subscription(
+            Image,
+            self.get_parameter('sidewalk_mask_topic').value,
+            self.mask_callback,
+            self.latest_only_qos,
+            callback_group=callback_group
+        )
+
         self.area_sub = self.create_subscription(
             Float32, '/voronoi/area_difference', self.area_callback, self.latest_only_qos, callback_group=callback_group
         )
@@ -390,7 +419,25 @@ class VoronoiNavigator(Node):
             LaserScan, '/scan', self.scan_callback, self.latest_only_qos, callback_group=callback_group
         )
         
-        self.get_logger().info("Voronoi Navigator initialized with active Global Planner integration.")
+        self.get_logger().info("Voronoi Navigator initialized with Dynamic Angular scaling.")
+
+    def mask_callback(self, msg: Image):
+        """Processes raw binary mask to count total current sidewalk pixels."""
+        try:
+            target_val = self.get_parameter('target_gray').value
+            # Convert raw bytes array to NumPy buffer for high-rate processing
+            mask_data = np.frombuffer(msg.data, dtype=np.uint8)
+            current_pixels = float(np.sum(mask_data == target_val))
+            
+            with self.lock:
+                self.current_sidewalk_pixels = current_pixels
+                if self.initial_sidewalk_pixels is None or self.initial_sidewalk_pixels == 0.0:
+                    # Ignore corrupted or blank startup frames
+                    if current_pixels > 1000.0:
+                        self.initial_sidewalk_pixels = current_pixels
+                        self.get_logger().info(f"CALIBRATION: Initial sidewalk baseline calibrated to {self.initial_sidewalk_pixels} pixels.")
+        except Exception as e:
+            self.get_logger().error(f"Error parsing sidewalk mask: {str(e)}")
 
     def target_direction_callback(self, msg: String):
         with self.lock:
@@ -525,6 +572,11 @@ class VoronoiNavigator(Node):
         consecutive_frames_threshold_in = self.get_parameter('consecutive_frames_threshold_in').value
         consecutive_frames_threshold_out = self.get_parameter('consecutive_frames_threshold_out').value
 
+        # Calculate dynamic max angular speed bound based on current mask ratio
+        base_max_angular = self.get_parameter('max_angular_speed').value
+        limit_max_angular = self.get_parameter('max_angular_speed_limit').value
+        alpha = self.get_parameter('angular_speed_scaling_factor').value
+
         with self.lock:
             scan_dist = self.latest_scan_min
             area_left = self.latest_area_left
@@ -538,6 +590,23 @@ class VoronoiNavigator(Node):
             
             history_length = len(self.split_history)
             split_avg = sum(list(self.split_history)[:-15]) / 10.0 if history_length >= 25 else 0.0
+
+            current_px = self.current_sidewalk_pixels
+            initial_px = self.initial_sidewalk_pixels
+
+        # Compute dynamic max angular limit: scaling increases as pixel count decreases
+        if initial_px is not None and initial_px > 0.0:
+            ratio = current_px / initial_px
+            ratio = max(0.01, min(1.0, ratio)) # Clamp ratio to safe bounds
+            
+            # Linear scaling relation: increases up to limit_max_angular as ratio drops
+            dynamic_max_angular = base_max_angular * (1.0 + alpha * (1.0 - ratio))
+            dynamic_max_angular = min(limit_max_angular, dynamic_max_angular)
+        else:
+            dynamic_max_angular = base_max_angular
+
+        # Assign calculated max angular constraint directly to control engine
+        self.engine.max_angular_speed = dynamic_max_angular
 
         if split_direction == 'stop':
             cmd = Twist()
@@ -668,9 +737,7 @@ class VoronoiNavigator(Node):
         else:
             prob_str = f"SPLIT PROB: {split_prob*100.0:5.1f}% (Avg (Delayed): N/A {history_length}/15)"
 
-        # =====================================================================
-        # STATE PRINTING RESTORATION (BRINGING BACK THE ORIGINAL STATE INFO)
-        # =====================================================================
+        # Diagnostics Output (includes dynamic max angular status)
         layout_str = ""
         if self.nav_state != self.STATE_NORMAL:
             tf = self.split_ways_record['total_frames']
@@ -700,8 +767,9 @@ class VoronoiNavigator(Node):
             status_str = f"STATUS: [SPLIT ACTIVE ({layout_str}) (Held by: {reasons_str}) | DIR: {split_direction.upper()} (ARC TURN){opp_str}]"
         
         self.get_logger().info(
-            f"Areas -> L: {area_left:6.1f} (Avg: {avg_left:6.1f}) | R: {area_right:6.1f} (Avg: {avg_right:6.1f}) | "
-            f"RawDiff: {raw_diff:6.1f} | {path_str} | {side_str} ({dist_str}) | "
+            f"Areas -> L: {area_left:6.1f} | R: {area_right:6.1f} | "
+            f"Sidewalk Px: {current_px:.0f} / {initial_px if initial_px is not None else 0.0:.0f} | "
+            f"Max Ang: {dynamic_max_angular:.3f} | "
             f"{prob_str} {status_str} | Cmd Angular: {angular_vel:6.3f} rad/s",
             throttle_duration_sec=0.2
         )
@@ -717,7 +785,6 @@ class VoronoiNavigator(Node):
 
 
 def main(args=None):
-    import rclpy
     rclpy.init(args=args)
     node = VoronoiNavigator()
     executor = MultiThreadedExecutor()
@@ -730,6 +797,7 @@ def main(args=None):
         node.publish_stop_cmd()
         node.destroy_node()
         rclpy.shutdown()
+
 
 if __name__ == '__main__':
     main()
