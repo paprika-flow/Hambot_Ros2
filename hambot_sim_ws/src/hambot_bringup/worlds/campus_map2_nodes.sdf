@@ -168,7 +168,7 @@
 
       <!-- Segment 4: Length 7.00m, Width 1.20m, Height 0.05m -->
       <link name="segment_4">
-        <pose>-10.8433 -14.6439 0.0 0 0 1.5708</pose>
+        <pose>-10.8510 -14.6075 0.0 0 0 1.5708</pose>
         <collision name="col">
           <pose>3.5000 0 0.0250 0 0 0</pose>
           <geometry>
@@ -477,6 +477,54 @@
           </plugin>
         </visual>
       </link>
+
+      <!-- Segment 17: Length 18.21m, Width 1.20m, Height 0.05m -->
+      <link name="segment_17">
+        <pose>-10.9173 -11.1286 0.0 0 0 -0.0042</pose>
+        <collision name="col">
+          <pose>9.1037 0 0.0250 0 0 0</pose>
+          <geometry>
+            <box><size>18.2074 1.2000 0.0500</size></box>
+          </geometry>
+        </collision>
+        <visual name="vis">
+          <pose>9.1037 0 0.0250 0 0 0</pose>
+          <geometry>
+            <box><size>18.2074 1.2000 0.0500</size></box>
+          </geometry>
+          <material>
+            <ambient>0.65 0.65 0.65 1</ambient>
+            <diffuse>0.65 0.65 0.65 1</diffuse>
+          </material>
+          <plugin filename="ignition-gazebo-label-system" name="ignition::gazebo::systems::Label">
+            <label>1</label> <!-- 1 = Sidewalk -->
+          </plugin>
+        </visual>
+      </link>
+
+      <!-- Segment 18: Length 5.26m, Width 1.20m, Height 0.05m -->
+      <link name="segment_18">
+        <pose>12.5314 -20.8249 0.0 0 0 1.5708</pose>
+        <collision name="col">
+          <pose>2.6318 0 0.0250 0 0 0</pose>
+          <geometry>
+            <box><size>5.2636 1.2000 0.0500</size></box>
+          </geometry>
+        </collision>
+        <visual name="vis">
+          <pose>2.6318 0 0.0250 0 0 0</pose>
+          <geometry>
+            <box><size>5.2636 1.2000 0.0500</size></box>
+          </geometry>
+          <material>
+            <ambient>0.65 0.65 0.65 1</ambient>
+            <diffuse>0.65 0.65 0.65 1</diffuse>
+          </material>
+          <plugin filename="ignition-gazebo-label-system" name="ignition::gazebo::systems::Label">
+            <label>1</label> <!-- 1 = Sidewalk -->
+          </plugin>
+        </visual>
+      </link>
     </model>
 
     <!-- ========================================== -->
@@ -494,7 +542,7 @@
 
     <!-- Waypoint: node_1 -->
     <frame name="node_1">
-      <pose>0.0000 0.0000 0.1000 0.0000 0.0000 3.1416</pose>
+      <pose>-0.0000 -0.0000 0.1000 0.0000 0.0000 1.5708</pose>
     </frame>
 
     <!-- Waypoint: node_5 -->
@@ -504,7 +552,7 @@
 
     <!-- Waypoint: node_4 -->
     <frame name="node_4">
-      <pose>13.0000 -0.0000 0.1000 0.0000 0.0000 1.5708</pose>
+      <pose>13.0000 0.0000 0.1000 0.0000 0.0000 -1.5818</pose>
     </frame>
 
     <!-- Waypoint: node_10 -->
@@ -519,7 +567,7 @@
 
     <!-- Waypoint: node_11 -->
     <frame name="node_11">
-      <pose>15.0000 -12.1400 0.1000 0.0000 0.0000 1.0552</pose>
+      <pose>7.0800 -11.2000 0.1000 0.0000 0.0000 -0.0042</pose>
     </frame>
 
     <!-- Waypoint: node_6 -->
@@ -545,6 +593,36 @@
     <!-- Waypoint: node_12 -->
     <frame name="node_12">
       <pose>25.6800 -2.6000 0.1000 0.0000 0.0000 -2.0371</pose>
+    </frame>
+
+    <!-- Waypoint: node_13 -->
+    <frame name="node_13">
+      <pose>-10.8800 -11.1500 0.1000 0.0000 0.0000 0.0000</pose>
+    </frame>
+
+    <!-- Waypoint: node_14 -->
+    <frame name="node_14">
+      <pose>12.5700 -20.3300 0.1000 0.0000 0.0000 1.4926</pose>
+    </frame>
+
+    <!-- Waypoint: node_18 -->
+    <frame name="node_18">
+      <pose>12.5500 -16.1000 0.1000 0.0000 0.0000 1.5873</pose>
+    </frame>
+
+    <!-- Waypoint: node_16 -->
+    <frame name="node_16">
+      <pose>13.0000 -8.0000 0.1000 0.0000 0.0000 -1.5259</pose>
+    </frame>
+
+    <!-- Waypoint: node_15 -->
+    <frame name="node_15">
+      <pose>22.4800 -8.2500 0.1000 0.0000 0.0000 -2.5025</pose>
+    </frame>
+
+    <!-- Waypoint: plaza1 -->
+    <frame name="plaza1">
+      <pose>12.8600 -11.4100 0.1000 0.0000 0.0000 0.0000</pose>
     </frame>
 
   </world>

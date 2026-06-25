@@ -11,7 +11,7 @@ from rclpy.node import Node
 from std_msgs.msg import String
 
 # =====================================================================
-# GEOMETRIC COMPILING FUNCTIONS & INTERSECTION TYPES
+# GEOMETRIC COMPILING FUNCTIONS & CLASS WRAPPERS
 # =====================================================================
 def calculate_relative_angle(prev_node, curr_node, next_node):
     v_in_x = curr_node.x - prev_node.x
@@ -27,20 +27,16 @@ def calculate_relative_angle(prev_node, curr_node, next_node):
         angle_diff -= 2 * math.pi
     while angle_diff <= -math.pi: 
         angle_diff += 2 * math.pi
-        
     return math.degrees(angle_diff)
 
 def assign_directions_dynamically(nb_angles):
-    left_nodes = []
-    straight_nodes = []
-    right_nodes = []
-    
+    left_nodes, straight_nodes, right_nodes = [], [], []
     for angle, node in nb_angles:
-        if -30 <= angle <= 30:
+        if -20 <= angle <= 20:
             straight_nodes.append((angle, node))
-        elif 30 < angle < 150:
+        elif 20 < angle:
             left_nodes.append((angle, node))
-        elif -150 < angle < -30:
+        elif angle < -20:
             right_nodes.append((angle, node))
         else:
             if angle >= 150: 
@@ -83,113 +79,55 @@ def assign_directions_dynamically(nb_angles):
             dirs[f'Straight {idx}'] = node
     return dirs
 
-def get_intersection_type(dir_map):
-    has_left = any(k.startswith('Left') for k in dir_map)
-    has_straight = any(k.startswith('Straight') for k in dir_map)
-    has_right = any(k.startswith('Right') for k in dir_map)
-    
-    if has_left and has_straight and has_right:
-        return cross()
-    elif has_left and not has_straight and has_right:
-        return T()
-    elif has_left and has_straight and not has_right:
-        return left()
-    elif not has_left and has_straight and has_right:
-        return right()
-    else:
-        return no_intersection()
-
-class Intersection:
-    def __init__(self, left, straight, right):
-        self.left = left
-        self.straight = straight
-        self.right = right
-
-class no_intersection(Intersection):
-    def __init__(self):
-        super().__init__(False, False, False)
-
-class cross(Intersection):
-    def __init__(self):
-        super().__init__(True, True, True)
-
-class T(Intersection):
-    def __init__(self):
-        super().__init__(True, False, True)
-
-class left(Intersection):
-    def __init__(self):
-        super().__init__(True, True, False)
-
-class right(Intersection):
-    def __init__(self):
-        super().__init__(False, True, True)
-
-# =====================================================================
-# CORE DATA STRUCTURES
-# =====================================================================
 class NodeClass:
-    def __init__(self, name, x, y, nodes=None):
+    def __init__(self, name, x, y, original_name=None, nodes=None):
         self.name = name
         self.x = x
         self.y = y
+        self.original_name = original_name if original_name is not None else name
         self.nodes = nodes if nodes is not None else []
-
-# Map alias to comply with sdftodataStruc.py structure cleanly
-NodeObj = NodeClass
 
 class Edges:
     def __init__(self, node1, node2, distance):
         self.node1 = node1
         self.node2 = node2
         self.dist = distance
-        self.type_intersection1 = no_intersection() 
-        self.type_intersection2 = no_intersection()
         self.directions = {node1.name: {}, node2.name: {}}
 
 class Map:
     def __init__(self):
         self.nodes_amount = 0
         self.all_nodes = []
+        self.nodes_by_name = {}  # Safe dictionary lookup for alphanumeric node names
         self.edges = dict()
 
-    def add_node(self, x, y, nodes=None):
-        node = NodeObj(f"{self.nodes_amount}", x, y, nodes)
-        self.all_nodes.append(node)
-        self.nodes_amount += 1
+    def add_node(self, name, x, y, original_name=None):
+        # Handle non-integer names (like 'p1') safely by mapping them to an auto-assigned list index
+        if not name.isdigit():
+            idx = len(self.all_nodes)
+            self.all_nodes.append(None)
+        else:
+            idx = int(name)
+            while len(self.all_nodes) <= idx:
+                self.all_nodes.append(None)
+                
+        node = NodeClass(name, x, y, original_name)
+        self.all_nodes[idx] = node
+        self.nodes_by_name[name] = node
+        self.nodes_amount = max(self.nodes_amount, idx + 1)
         return node
 
-    def change_node(self, node, node_to_be_added):
-        self.all_nodes[int(node.name)].nodes.append(node_to_be_added)
-
-    def add_segment(self, node1: NodeObj, node2: NodeObj, distance: float = None):
-        idx1 = int(node1.name)
-        while len(self.all_nodes) <= idx1:
-            self.all_nodes.append(None)
-        if self.all_nodes[idx1] is None:
-            self.all_nodes[idx1] = node1
-            self.nodes_amount = max(self.nodes_amount, idx1 + 1)
-
-        if node2 not in node1.nodes:
-            self.change_node(node1, node2)
-
-        idx2 = int(node2.name)
-        while len(self.all_nodes) <= idx2:
-            self.all_nodes.append(None)
-        if self.all_nodes[idx2] is None:
-            self.all_nodes[idx2] = node2
-            self.nodes_amount = max(self.nodes_amount, idx2 + 1)
-
-        if node1 not in node2.nodes:
-            self.change_node(node2, node1)
-
-        calculated_dist = math.dist((node1.x, node1.y), (node2.x, node2.y))
-        self.edges[node1, node2] = Edges(node1, node2, calculated_dist)
+    def add_segment(self, node1, node2):
+        if node2 not in node1.nodes: 
+            node1.nodes.append(node2)
+        if node1 not in node2.nodes: 
+            node2.nodes.append(node1)
+        dist = math.dist((node1.x, node1.y), (node2.x, node2.y))
+        self.edges[node1, node2] = Edges(node1, node2, dist)
 
     def compile_map(self):
-        for edge in list(self.edges.values()):
+        for edge in self.edges.values():
             n1, n2 = edge.node1, edge.node2
-            
             edge.directions[n1.name] = {}
             edge.directions[n2.name] = {}
             
@@ -202,170 +140,6 @@ class Map:
             if neighbors2:
                 nb_angles = [(calculate_relative_angle(n1, n2, nb), nb) for nb in neighbors2]
                 edge.directions[n2.name] = assign_directions_dynamically(nb_angles)
-            
-            edge.type_intersection1 = get_intersection_type(edge.directions[n1.name])
-            edge.type_intersection2 = get_intersection_type(edge.directions[n2.name])
-
-# =====================================================================
-# GEOMETRIC UTILITIES & SDF PARSERS (SDF TO DATA STRUCTURE LOGIC)
-# =====================================================================
-def point_to_segment_distance_and_projection(px, py, ax, ay, bx, by):
-    abx = bx - ax
-    aby = by - ay
-    apx = px - ax
-    apy = py - ay
-    
-    ab_len_sq = abx**2 + aby**2
-    if ab_len_sq == 0:
-        return math.hypot(px - ax, py - ay), 0.0
-        
-    t = (apx * abx + apy * aby) / ab_len_sq
-    t_clamped = max(0.0, min(1.0, t))
-    
-    proj_x = ax + t_clamped * abx
-    proj_y = ay + t_clamped * aby
-    
-    dist = math.hypot(px - proj_x, py - proj_y)
-    return dist, t_clamped
-
-def extract_node_id(frame_name, existing_ids):
-    match = re.search(r'\d+', frame_name)
-    if match:
-        val = int(match.group())
-        if val in existing_ids:
-            new_val = max(existing_ids) + 1
-            return new_val
-        return val
-    new_val = max(existing_ids) + 1 if existing_ids else 0
-    return new_val
-
-def parse_sdf(sdf_str):
-    root = ET.fromstring(sdf_str)
-    world = root.find('world')
-    
-    # 1. Extract raw Frames (Waypoints)
-    frames = []
-    for frame in world.findall('frame'):
-        name = frame.attrib['name']
-        pose_text = frame.find('pose').text.strip()
-        parts = [float(val) for val in pose_text.split()]
-        x, y = parts[0], parts[1]
-        frames.append({'name': name, 'x': x, 'y': y})
-        
-    # 2. Extract Raw Sidewalk Links
-    segments = []
-    sidewalk_model = None
-    for model in world.findall('model'):
-        if model.attrib.get('name') == 'sidewalk_network':
-            sidewalk_model = model
-            break
-            
-    if sidewalk_model is not None:
-        for link in sidewalk_model.findall('link'):
-            link_name = link.attrib['name']
-            pose_elem = link.find('pose')
-            pose_parts = [float(v) for v in pose_elem.text.strip().split()]
-            link_x, link_y, _, _, _, yaw = pose_parts
-            
-            collision = link.find('collision')
-            box_geom = collision.find('geometry').find('box')
-            size_parts = [float(v) for v in box_geom.find('size').text.strip().split()]
-            length, width, height = size_parts
-            
-            ax, ay = link_x, link_y
-            bx = link_x + length * math.cos(yaw)
-            by = link_y + length * math.sin(yaw)
-            
-            segments.append({
-                'name': link_name,
-                'ax': ax, 'ay': ay,
-                'bx': bx, 'by': by,
-                'length': length,
-                'width': width
-            })
-            
-    return frames, segments
-
-def clean_and_map_nodes(frames):
-    cleaned_frames = []
-    name_mapping = {}
-    
-    for f in frames:
-        merged = False
-        for cf in cleaned_frames:
-            dist = math.hypot(f['x'] - cf['x'], f['y'] - cf['y'])
-            if dist < 1.0:
-                name_mapping[f['name']] = cf['name']
-                merged = True
-                break
-        if not merged:
-            cleaned_frames.append(f)
-            name_mapping[f['name']] = f['name']
-            
-    existing_ids = set()
-    node_id_map = {}
-    node_coords = {}
-    
-    for cf in cleaned_frames:
-        n_id = extract_node_id(cf['name'], existing_ids)
-        existing_ids.add(n_id)
-        node_id_map[cf['name']] = n_id
-        node_coords[n_id] = (cf['x'], cf['y'], cf['name'])
-        
-    for orig_name, target_name in name_mapping.items():
-        if orig_name not in node_id_map:
-            target_id = node_id_map[target_name]
-            node_id_map[orig_name] = target_id
-            
-    return node_id_map, node_coords
-
-def associate_nodes_to_segments(node_coords, segments):
-    segment_nodes = {seg['name']: [] for seg in segments}
-    
-    for n_id, (nx, ny, name) in node_coords.items():
-        for seg in segments:
-            dist, t = point_to_segment_distance_and_projection(
-                nx, ny, seg['ax'], seg['ay'], seg['bx'], seg['by']
-            )
-            threshold = (seg['width'] / 2.0) + 0.3 # 0.9m
-            if dist <= threshold:
-                segment_nodes[seg['name']].append((t, n_id))
-                
-    return segment_nodes
-
-def populate_map_from_sdf(my_map, node_coords, segment_nodes, extra_connections=None):
-    node_objects = {}
-    for n_id, (x, y, original_name) in node_coords.items():
-        node = NodeObj(str(n_id), x, y)
-        node_objects[n_id] = node
-        
-        idx = int(node.name)
-        while len(my_map.all_nodes) <= idx:
-            my_map.all_nodes.append(None)
-        my_map.all_nodes[idx] = node
-        my_map.nodes_amount = max(my_map.nodes_amount, idx + 1)
-        
-    for seg_name, nodes_list in segment_nodes.items():
-        if len(nodes_list) < 2:
-            continue
-        nodes_list.sort(key=lambda x: x[0])
-        
-        for i in range(len(nodes_list) - 1):
-            n1_id = nodes_list[i][1]
-            n2_id = nodes_list[i+1][1]
-            node1 = node_objects[n1_id]
-            node2 = node_objects[n2_id]
-            
-            if node1 != node2:
-                my_map.add_segment(node1, node2)
-                
-    if extra_connections:
-        for n1_id, n2_id in extra_connections:
-            if n1_id in node_objects and n2_id in node_objects:
-                node1 = node_objects[n1_id]
-                node2 = node_objects[n2_id]
-                my_map.add_segment(node1, node2)
-
 
 # =====================================================================
 # DIJKSTRA ROUTING MECHANIC
@@ -413,11 +187,12 @@ class GlobalPlannerNode(Node):
         self.declare_parameter('world_name', 'campus_sidewalk')
         self.world_name = self.get_parameter('world_name').value
 
-        self.start_node_str = self.declare_flexible_node_parameter('start_node', 0)
-        self.end_node_str = self.declare_flexible_node_parameter('end_node', 19)
+        self.start_node_str = self.declare_flexible_node_parameter('start_node', '0')
+        self.end_node_str = self.declare_flexible_node_parameter('end_node', '19')
         
         # Build Map Structure (Calculated strictly once during setup)
         self.map = Map()
+        self.plazas = {}  # Holds plaza structure mapping
         self.load_sdf_geometry()
         
         # Compute Path (Calculated strictly once during setup)
@@ -440,18 +215,20 @@ class GlobalPlannerNode(Node):
         self.timer = self.create_timer(3.0, self.publish_current_target)
         self.get_logger().info("Event-driven high-efficiency global planner initialized.")
 
-    def declare_flexible_node_parameter(self, name, default_val_int):
+    def declare_flexible_node_parameter(self, name, default_val):
+        # 1. Try to declare as integer first to match standard parameters file overrides
         try:
-            self.declare_parameter(name, int(default_val_int))
+            self.declare_parameter(name, int(default_val))
             val = self.get_parameter(name).value
             return str(val)
         except Exception:
+            # 2. If integer conversion fails or type mismatch occurs, fallback to string
             try:
-                self.declare_parameter(name, str(default_val_int))
+                self.declare_parameter(name, str(default_val))
                 val = self.get_parameter(name).value
                 return str(val)
             except Exception:
-                return str(default_val_int)
+                return str(default_val)
 
     def load_sdf_geometry(self):
         pkg_bringup = get_package_share_directory('hambot_bringup')
@@ -461,54 +238,384 @@ class GlobalPlannerNode(Node):
             self.get_logger().error(f"SDF World path does not exist: {world_path}")
             return
             
-        try:
-            with open(world_path, 'r', encoding='utf-8') as f:
-                sdf_string = f.read()
-        except Exception as e:
-            self.get_logger().error(f"Failed to read SDF file: {str(e)}")
+        tree = ET.parse(world_path)
+        root = tree.getroot()
+        world = root.find('world')
+        
+        raw_frames = []
+        for frame in world.findall('frame'):
+            name = frame.attrib['name']
+            pose_text = frame.find('pose').text.strip().split()
+            x, y = float(pose_text[0]), float(pose_text[1])
+            raw_frames.append({'name': name, 'x': x, 'y': y})
+            
+        cleaned_frames = []
+        for f in raw_frames:
+            merged = False
+            for cf in cleaned_frames:
+                if math.hypot(f['x'] - cf['x'], f['y'] - cf['y']) < 1.0:
+                    merged = True
+                    break
+            if not merged:
+                cleaned_frames.append(f)
+                
+        node_id_mapping = {}
+        for f in cleaned_frames:
+            # SPECIAL p* PLAZA IDENTIFICATION RULE:
+            # If the frame name represents a plaza waypoint, identify it as "p*" 
+            # (where * is the number) to differentiate it as a specialized hub node.
+            if "plaza" in f['name'].lower():
+                match = re.search(r'\d+', f['name'])
+                idx_str = f"p{match.group()}" if match else "p1"
+            else:
+                match = re.search(r'\d+', f['name'])
+                idx_str = match.group() if match else f['name']
+                
+            node_id_mapping[f['name']] = idx_str
+            self.map.add_node(idx_str, f['x'], f['y'], original_name=f['name'])
+            
+        sidewalk_model = None
+        for model in world.findall('model'):
+            if model.attrib.get('name') == 'sidewalk_network':
+                sidewalk_model = model
+                break
+                
+        if sidewalk_model is None:
+            self.get_logger().error("Model 'sidewalk_network' not found inside the specified world.")
             return
             
-        # Compile layout frames, links, projection configurations and duplicates
-        frames, segments = parse_sdf(sdf_string)
-        node_id_map, node_coords = clean_and_map_nodes(frames)
-        segment_nodes = associate_nodes_to_segments(node_coords, segments)
+        segments = []
+        for link in sidewalk_model.findall('link'):
+            link_name = link.attrib['name']
+            pose_parts = [float(v) for v in link.find('pose').text.strip().split()]
+            lx, ly, _, _, _, yaw = pose_parts
+            
+            size_parts = [float(v) for v in link.find('collision').find('geometry').find('box').find('size').text.strip().split()]
+            length, width = size_parts[0], size_parts[1]
+            
+            ax, ay = lx, ly
+            bx = lx + length * math.cos(yaw)
+            by = ly + length * math.sin(yaw)
+            
+            segments.append({'name': link_name, 'ax': ax, 'ay': ay, 'bx': bx, 'by': by, 'width': width})
+            
+        segment_nodes_map = {seg['name']: [] for seg in segments}
+        for node in self.map.all_nodes:
+            if node is None: 
+                continue
+            for seg in segments:
+                abx, aby = seg['bx'] - seg['ax'], seg['by'] - seg['ay']
+                apx, apy = node.x - seg['ax'], node.y - seg['ay']
+                ab_len_sq = abx**2 + aby**2
+                
+                t = (apx * abx + apy * aby) / ab_len_sq if ab_len_sq > 0 else 0.0
+                t_clamped = max(0.0, min(1.0, t))
+                
+                proj_x = seg['ax'] + t_clamped * abx
+                proj_y = seg['ay'] + t_clamped * aby
+                dist = math.hypot(node.x - proj_x, node.y - proj_y)
+                
+                tolerance = 3.5 if seg['width'] >= 1.5 else 0.3
+                if dist <= (seg['width'] / 2.0 + tolerance):
+                    segment_nodes_map[seg['name']].append((t_clamped, node))
+                    
+        # RULE 1: Connect 1D corridors sequentially, but connect plazas/wide areas as hub-and-spoke
+        for seg_name, nodes_list in segment_nodes_map.items():
+            if len(nodes_list) < 2: 
+                continue
+                
+            seg = next(s for s in segments if s['name'] == seg_name)
+            seg_width = seg.get('width', 0.9)
+            
+            if seg_width >= 1.5:
+                # Wide Area/Plaza: Identify the special p* plaza hub node
+                plaza_center = None
+                for _, node in nodes_list:
+                    if str(node.name).startswith('p'):
+                        plaza_center = node
+                        break
+                
+                # Fallback to the closest centroid node if naming doesn't contain 'p'
+                if not plaza_center:
+                    center_x = (seg['ax'] + seg['bx']) / 2.0
+                    center_y = (seg['ay'] + seg['by']) / 2.0
+                    min_dist = float('inf')
+                    for _, node in nodes_list:
+                        d = math.hypot(node.x - center_x, node.y - center_y)
+                        if d < min_dist:
+                            min_dist = d
+                            plaza_center = node
+                        
+                if plaza_center:
+                    portals = [n for _, n in nodes_list if n != plaza_center]
+                    self.plazas[plaza_center.name] = {
+                        'center': plaza_center,
+                        'portals': portals
+                    }
+                    # Link portals strictly to the central hub node (spokes)
+                    for portal in portals:
+                        self.map.add_segment(plaza_center, portal)
+            else:
+                # Narrow Corridor: Connect nodes sequentially along the projection axis
+                nodes_list.sort(key=lambda item: item[0])
+                for i in range(len(nodes_list) - 1):
+                    n1, n2 = nodes_list[i][1], nodes_list[i+1][1]
+                    if n1 != n2:
+                        self.map.add_segment(n1, n2)
+
+        # RULE 2: Bridge nodes separated by empty curved/turning segment chains (Segment BFS)
+        touching_segments = {seg['name']: [] for seg in segments}
+        for seg1 in segments:
+            for seg2 in segments:
+                if seg1['name'] == seg2['name']:
+                    continue
+                ep1 = [(seg1['ax'], seg1['ay']), (seg1['bx'], seg1['by'])]
+                ep2 = [(seg2['ax'], seg2['ay']), (seg2['bx'], seg2['by'])]
+                
+                is_touching = False
+                for p1 in ep1:
+                    for p2 in ep2:
+                        if math.hypot(p1[0] - p2[0], p1[1] - p2[1]) < 1.0:
+                            is_touching = True
+                            break
+                    if is_touching:
+                        break
+                if is_touching:
+                    touching_segments[seg1['name']].append(seg2['name'])
+
+        segs_with_nodes = [s_name for s_name, nodes in segment_nodes_map.items() if len(nodes) > 0]
+        connections_to_make = set()
         
-        # Geometrically forced connections for curvilinear boundaries
-        edge_overrides = [(10, 2), (4, 11), (11, 12)]
-        
-        # Build map with connection overrides and dynamic calculations
-        populate_map_from_sdf(self.map, node_coords, segment_nodes, extra_connections=edge_overrides)
+        for start_seg in segs_with_nodes:
+            queue = [(start_seg, [start_seg])]
+            visited = {start_seg}
+            
+            while queue:
+                curr_seg, path = queue.pop(0)
+                
+                if curr_seg != start_seg and curr_seg in segs_with_nodes:
+                    pair = tuple(sorted([start_seg, curr_seg]))
+                    connections_to_make.add(pair)
+                    continue
+                    
+                for neighbor in touching_segments[curr_seg]:
+                    if neighbor not in visited:
+                        visited.add(neighbor)
+                        queue.append((neighbor, path + [neighbor]))
+                        
+        for segA, segB in connections_to_make:
+            nodesA = segment_nodes_map[segA]
+            nodesB = segment_nodes_map[segB]
+            
+            best_pair = None
+            min_d = float('inf')
+            for _, n1 in nodesA:
+                for _, n2 in nodesB:
+                    if n1 != n2:
+                        d = math.hypot(n1.x - n2.x, n1.y - n2.y)
+                        if d < min_d:
+                            min_d = d
+                            best_pair = (n1, n2)
+            if best_pair:
+                self.map.add_segment(best_pair[0], best_pair[1])
+
+        # PORTAL DISCONNECTION SANITIZATION PASS:
+        # Enforces a strict Hub-and-Spoke structure. If any two nodes connected to each other 
+        # belong to the same plaza center, break their connection. This forces Dijkstra to route 
+        # physically through the center 'p*' node, triggering the plaza's geometric relative turn rules.
+        for plaza_name, plaza_data in self.plazas.items():
+            portals = plaza_data['portals']
+            for i in range(len(portals)):
+                for j in range(i + 1, len(portals)):
+                    p1 = portals[i]
+                    p2 = portals[j]
+                    if p2 in p1.nodes:
+                        p1.nodes.remove(p2)
+                    if p1 in p2.nodes:
+                        p2.nodes.remove(p1)
+                    self.map.edges.pop((p1, p2), None)
+                    self.map.edges.pop((p2, p1), None)
+
         self.map.compile_map()
+        self.get_logger().info(f"SDF compiled. Created {len([n for n in self.map.all_nodes if n])} topological nodes.")
+
+        # =====================================================================
+        # DEBUG VERIFICATION: PRINT MAP DATA STRUCTURE
+        # =====================================================================
+        print("\n" + "="*60)
+        print("          VERIFYING TOPOLOGICAL MAP DATA STRUCTURE")
+        print("="*60)
+        print("--- TOPOLOGICAL NODES LIST ---")
+        for n in self.map.all_nodes:
+            if n is None: 
+                continue
+            degree = len(n.nodes)
+            node_type = "Dead-End" if degree == 1 else f"{degree}-way Intersection"
+            neighbors = ", ".join([nb.original_name for nb in n.nodes])
+            print(f"  Node {n.original_name:10s} | Position: ({n.x:6.2f}, {n.y:6.2f}) | {node_type:20s} | Neighbors: [{neighbors}]")
+            
+        print("\n--- EDGE DIRECTIONS & PERSPECTIVES ---")
+        for edge in self.map.edges.values():
+            n1, n2 = edge.node1, edge.node2
+            print(f"\nEdge ({n1.original_name} <-> {n2.original_name}) | Distance: {edge.dist:.2f} meters")
+            
+            # Print directions from both travel perspectives
+            for curr, approach in [(n1, n2), (n2, n1)]:
+                dir_map = edge.directions.get(curr.name, {})
+                if dir_map:
+                    perspective_str = " | ".join([f"{direction} -> Node {target.original_name}" for direction, target in dir_map.items()])
+                    print(f"  * At Node {curr.original_name} (approaching from Node {approach.original_name}): {perspective_str}")
+                else:
+                    print(f"  * At Node {curr.original_name} (approaching from Node {approach.original_name}): Dead End (No connections)")
+        print("\n" + "="*60 + "\n")
+
+    def generate_plaza_instruction(self, plaza_name, entry_node, exit_node):
+        """
+        Generates a semantic "N-th left/right" roundabout instruction for traversing a plaza,
+        and returns the correct command direction for the voronoi_navigator (e.g. plaza_right_2).
+        """
+        plaza_data = self.plazas.get(plaza_name)
+        if not plaza_data:
+            return f"proceed straight towards {exit_node.original_name}", "straight"
+            
+        center = plaza_data['center']
+        portals = plaza_data['portals']
         
-        self.get_logger().info(f"SDF compiled using projection pipeline. Created {len([n for n in self.map.all_nodes if n])} topological nodes.")
+        # 1. Compute absolute angles from plaza center to each portal
+        theta_entry_node = math.atan2(entry_node.y - center.y, entry_node.x - center.x)
+        theta_exit_node = math.atan2(exit_node.y - center.y, exit_node.x - center.x)
+        
+        # 2. Determine if the exit is to the left or right of our entry heading
+        # Entry heading is the vector pointing from entry_node to center
+        dx_heading = center.x - entry_node.x
+        dy_heading = center.y - entry_node.y
+        theta_entry_heading = math.atan2(dy_heading, dx_heading)
+        
+        delta_theta = theta_exit_node - theta_entry_heading
+        delta_theta = (delta_theta + math.pi) % (2 * math.pi) - math.pi  # Normalize to [-pi, pi]
+        
+        # If relative angle is negative, we go counter-clockwise (to the right)
+        # If relative angle is positive, we go clockwise (to the left)
+        is_left = (delta_theta >= 0.0)
+        direction_str = "left" if is_left else "right"
+        
+        # 3. Gather other portals and compute their angles relative to the entry node
+        portal_ranks = []
+        for portal in portals:
+            if portal.name == entry_node.name:
+                continue
+                
+            theta_p = math.atan2(portal.y - center.y, portal.x - center.x)
+            
+            if is_left:
+                # Clockwise (Left) order: angle decreases, so (theta_entry_node - theta_p) mod 2pi
+                rel_angle = (theta_entry_node - theta_p) % (2 * math.pi)
+            else:
+                # Counter-Clockwise (Right) order: angle increases, so (theta_p - theta_entry_node) mod 2pi
+                rel_angle = (theta_p - theta_entry_node) % (2 * math.pi)
+                
+            portal_ranks.append((portal, rel_angle))
+            
+        # Sort ascending to order them as we encounter them driving around the perimeter
+        portal_ranks.sort(key=lambda x: x[1])
+        
+        # 4. Find the exit rank of our target exit_node
+        target_rank = -1
+        for idx, (portal, _) in enumerate(portal_ranks):
+            if portal.name == exit_node.name:
+                target_rank = idx + 1
+                break
+                
+        if target_rank == -1:
+            return f"proceed straight towards {exit_node.original_name}", "straight"
+            
+        ordinals = {1: "first", 2: "second", 3: "third", 4: "fourth"}
+        rank_str = ordinals.get(target_rank, f"{target_rank}th")
+        
+        command_str = f"plaza_{direction_str}_{target_rank}"
+        instruction_str = f"take the {rank_str} {direction_str} exit"
+        
+        return instruction_str, command_str
 
     def compute_global_plan(self):
-        try:
-            start_node_obj = self.map.all_nodes[int(self.start_node_str)]
-            end_node_obj = self.map.all_nodes[int(self.end_node_str)]
-        except (ValueError, IndexError):
-            self.get_logger().error("Routing failed: Node IDs invalid or non-existent in the SDF structure.")
+        # Look up start and end nodes securely using the dictionary lookup table
+        start_node_obj = self.map.nodes_by_name.get(self.start_node_str)
+        if start_node_obj is None:
+            try:
+                start_node_obj = self.map.all_nodes[int(self.start_node_str)]
+            except (ValueError, IndexError):
+                pass
+                
+        end_node_obj = self.map.nodes_by_name.get(self.end_node_str)
+        if end_node_obj is None:
+            try:
+                end_node_obj = self.map.all_nodes[int(self.end_node_str)]
+            except (ValueError, IndexError):
+                pass
+                
+        if start_node_obj is None or end_node_obj is None:
+            self.get_logger().error(f"Routing failed: Start '{self.start_node_str}' or End '{self.end_node_str}' invalid.")
             return
             
         path, dist = dijkstra(self.map, start_node_obj, end_node_obj)
         if not path:
-            self.get_logger().error(f"No path could be calculated between Node {self.start_node_str} and Node {self.end_node_str}.")
+            self.get_logger().error(f"No path could be calculated between start and end node.")
             return
             
         self.path = path
-        path_names = [n.name for n in path]
+        path_names = [n.original_name for n in path]
         self.get_logger().info(f"Dijkstra computed global trajectory: {path_names} (Distance: {dist:.2f}m)")
         
         self.turn_sequence = []
-        for i in range(1, len(path) - 1):
+        instructions_summary = []
+        
+        # 1. Starting Segment Instruction
+        if len(path) >= 2:
+            # Check if the first transition enters a plaza
+            if len(path) >= 3 and path[1].name in self.plazas:
+                # First node is the entry portal to a plaza!
+                # We handle this in the loop below, so we don't need a separate step 1 proceed straight
+                pass
+            else:
+                instructions_summary.append(f"Proceed straight from {path[0].original_name} to {path[1].original_name}")
+            
+        i = 1
+        while i < len(path) - 1:
             prev_node = path[i-1]
             current_node = path[i]
             next_node = path[i+1]
             
+            # PLAZA ENTRY LOOK-AHEAD RULE:
+            # If the next node in the path is a plaza center, then the current node is the entry portal.
+            # We must assign the plaza instruction and "plaza_direction_rank" command directly to 
+            # the current node (the entry portal) and skip any intermediate "straight to plaza center" instructions.
+            if next_node.name in self.plazas and i + 2 < len(path):
+                plaza_name = next_node.name
+                entry_node = current_node
+                exit_node = path[i+2]
+                
+                instruction_str, command_str = self.generate_plaza_instruction(plaza_name, entry_node, exit_node)
+                instructions_summary.append(
+                    f"At entry portal {entry_node.original_name}, "
+                    f"{instruction_str.upper()} (Command: {command_str.upper()}) and exit towards {exit_node.original_name}"
+                )
+                self.turn_sequence.append((entry_node.name, command_str))
+                
+                # Advance i by 2 to skip both the plaza center node itself and its exit portal step
+                i += 2
+                continue
+                
+            # If current_node is a plaza center node (which could happen if we start at the plaza or pathing fallback),
+            # we handle it defensively, but otherwise we bypass it.
+            if current_node.name in self.plazas:
+                i += 1
+                continue
+                
+            # Standard corridor directional logic
             edge = self.map.edges.get((prev_node, current_node)) or self.map.edges.get((current_node, prev_node))
+            selected_turn = 'straight'
             if edge is not None:
                 dir_map = edge.directions.get(current_node.name, {})
-                selected_turn = 'straight'
                 for direction, target_node in dir_map.items():
                     if target_node == next_node:
                         direction_lower = direction.lower()
@@ -519,12 +626,31 @@ class GlobalPlannerNode(Node):
                         else: 
                             selected_turn = 'straight'
                         break
-                self.turn_sequence.append((current_node.name, selected_turn))
-            else:
-                self.turn_sequence.append((current_node.name, 'straight'))
+            instructions_summary.append(
+                f"At Node {current_node.original_name}, turn {selected_turn.upper()} towards {next_node.original_name}"
+            )
+            self.turn_sequence.append((current_node.name, selected_turn))
+            i += 1
+            
+        # 2. Final Approach Instruction
+        if len(path) >= 2:
+            # Only add final approach if the last edge wasn't already covered in the plaza skip
+            last_sequence_node_name = self.turn_sequence[-1][0] if self.turn_sequence else None
+            if last_sequence_node_name != path[-2].name:
+                instructions_summary.append(
+                    f"Finally, proceed straight from {path[-2].original_name} to {path[-1].original_name} to reach target destination."
+                )
+            
+        # 3. Print the comprehensive route checklist on startup
+        print("\n" + "="*75)
+        print("                 COMPREHENSIVE GLOBAL ROUTE ITINERARY")
+        print("="*75)
+        for idx, step in enumerate(instructions_summary, 1):
+            print(f"  Step {idx:2d}: {step}")
+        print("="*75 + "\n")
                 
         self.get_logger().info(f"Sequence of intermediate relative turn decisions: {self.turn_sequence}")
-
+        
     def feedback_callback(self, msg: String):
         if msg.data == "reached_destination":
             self.get_logger().info("COORDINATION_UPDATE: Destination reached by navigator. Shutting down global planner.")
@@ -536,7 +662,10 @@ class GlobalPlannerNode(Node):
                 node_name, turn_dir = self.turn_sequence[self.current_turn_index]
                 self.get_logger().info(f"COORDINATION_UPDATE: Split action '{turn_dir.upper()}' at Node {node_name} completed.")
                 
+                # 1. Advance step index
                 self.current_turn_index += 1
+                
+                # 2. IMMEDIATELY dispatch next target target to eliminate polling latency
                 self.publish_current_target()
                 
                 if self.current_turn_index < len(self.turn_sequence):
@@ -560,7 +689,7 @@ class GlobalPlannerNode(Node):
 
         is_final_edge = (self.current_turn_index >= len(self.turn_sequence))
 
-        # Classify the destination target node type
+        # Check destination node type if we are on the final edge
         if is_final_edge:
             end_node_obj = self.path[-1]
             if len(end_node_obj.nodes) <= 1:
@@ -579,14 +708,14 @@ class GlobalPlannerNode(Node):
                 node_a = self.path[k]
                 node_b = self.path[k+1]
                 self.get_logger().info(
-                    f"TRACKER: Robot is traversing edge {node_a.name} <-> {node_b.name}. Next turn decision at Node {node_b.name} is '{turn_dir.upper()}'",
+                    f"TRACKER: Robot is traversing edge {node_a.original_name} <-> {node_b.original_name}. Next turn decision at Node {node_b.original_name} is '{turn_dir.upper()}'",
                     throttle_duration_sec=5.0
                 )
         else:
             node_a = self.path[-2]
             node_b = self.path[-1]
             self.get_logger().info(
-                f"TRACKER: Robot is on the final straight section {node_a.name} <-> {node_b.name} approaching target.",
+                f"TRACKER: Robot is on the final straight section {node_a.original_name} <-> {node_b.original_name} approaching target.",
                 throttle_duration_sec=5.0
             )
             msg.data = "straight"
@@ -609,6 +738,7 @@ def main(args=None):
 
 if __name__ == '__main__':
     main()
+
     
 '''
 ros2 launch hambot_bringup voronoi_launch.py \

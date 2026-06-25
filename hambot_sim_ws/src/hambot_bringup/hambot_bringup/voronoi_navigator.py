@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import re
 import math
 import time
 import threading
@@ -39,7 +40,7 @@ class VoronoiNavigationEngine:
         side_deadband: float = 0.03, 
         min_side_distance: float = 0.0, 
         deactivate_area_threshold: float = 700.0,
-        angular_influence_on_linear: float = 0.3  # Parameterized decoupling factor
+        angular_influence_on_linear: float = 0.3
     ):
         self.kp_area = kp_area
         self.kd_area = kd_area
@@ -84,7 +85,11 @@ class VoronoiNavigationEngine:
         handling_split: bool = False,
         split_direction: str = 'straight',
         split_turn_kp: float = 0.15,
-        split_turn_kd: float = 0.03
+        split_turn_kd: float = 0.03,
+        handling_plaza: bool = False,
+        plaza_direction: str = 'right',
+        plaza_edge_following: bool = False,
+        plaza_target_x: float = None
     ) -> tuple:
         current_time = time.time()
         
@@ -105,20 +110,51 @@ class VoronoiNavigationEngine:
 
         self.opposite_target_active = False
 
-        if handling_split:
+        # PHASE 2: PLAZA EDGE-FOLLOWING ACTIVE
+        if handling_plaza and plaza_edge_following:
             error_area = 0.0
             error_side = 0.0
-            
             error_pos = 0.0
             center_x = self.image_width / 2.0
             
-            if split_direction == 'straight':
+            target_x = plaza_target_x if plaza_target_x is not None else center_x
+            
+            if pos_valid:
+                error_pos = (target_x - path_x) / center_x
+                
+            kp_pos_active = split_turn_kp
+            kd_pos_active = split_turn_kd
+            
+            p_term_pos = kp_pos_active * error_pos
+            p_term = p_term_pos
+            
+            d_term_pos = 0.0
+            if dt > 0 and pos_valid and self.prev_pos_valid:
+                raw_derivative_pos = (error_pos - self.prev_error_pos) / dt
+                d_term_pos = kd_pos_active * raw_derivative_pos
+            d_term = d_term_pos
+            
+            raw_angular_vel = p_term + d_term
+            
+            bias = -0.015 if plaza_direction == 'right' else 0.015
+            raw_angular_vel += bias
+
+        # PHASE 1: STANDARD SPLIT OR INITIAL PLAZA ENTRY SHARP TURN
+        elif handling_split or (handling_plaza and not plaza_edge_following):
+            error_area = 0.0
+            error_side = 0.0
+            error_pos = 0.0
+            center_x = self.image_width / 2.0
+            
+            active_direction = plaza_direction if handling_plaza else split_direction
+            
+            if active_direction == 'straight':
                 if pos_valid:
                     error_pos = (center_x - path_x) / center_x
                 kp_pos_active = max(self.kp_pos * 3.0, 0.6)
                 kd_pos_active = max(self.kd_pos * 2.0, 0.1)
                     
-            elif split_direction == 'left':
+            elif active_direction == 'left':
                 left_off_sidewalk = False
                 if side_valid:
                     left_x = side_mid_x - (side_dist / 2.0)
@@ -137,7 +173,7 @@ class VoronoiNavigationEngine:
                 kp_pos_active = split_turn_kp
                 kd_pos_active = split_turn_kd
                     
-            elif split_direction == 'right':
+            elif active_direction == 'right':
                 right_off_sidewalk = False
                 if side_valid:
                     right_x = side_mid_x + (side_dist / 2.0)
@@ -168,7 +204,9 @@ class VoronoiNavigationEngine:
                 d_term_pos = kd_pos_active * raw_derivative_pos
                 
             d_term = d_term_pos
+            raw_angular_vel = p_term + d_term
 
+        # STANDARD CENTER CORRIDOR DRIVING
         else:
             raw_diff = area_left - area_right
             error_area = raw_diff / self.area_normalization_scale
@@ -202,8 +240,8 @@ class VoronoiNavigationEngine:
                 d_term_side = self.kd_side * raw_derivative_side
 
             d_term = d_term_area + d_term_pos + d_term_side
+            raw_angular_vel = p_term + d_term
         
-        raw_angular_vel = p_term + d_term
         raw_angular_vel = max(-self.max_angular_speed, min(self.max_angular_speed, raw_angular_vel))
         
         self.smoothed_angular_vel = (self.smoothing_factor * raw_angular_vel) + \
@@ -216,10 +254,7 @@ class VoronoiNavigationEngine:
         self.prev_side_valid = side_valid
         self.prev_time = current_time
         
-        # Coupled control scaling: Normalize angular velocity correction
         norm_correction = abs(raw_angular_vel) / max(self.max_angular_speed, 1e-5)
-        
-        # Reduced influence of angular velocity on linear velocity using parameter
         speed_multiplier = max(0.3, 1.0 - norm_correction * self.angular_influence_on_linear)
         
         base_speed = self.target_linear_speed
@@ -236,6 +271,7 @@ class VoronoiNavigator(Node):
     STATE_NORMAL = 0
     STATE_SPLIT_AHEAD = 1
     STATE_HANDLING_SPLIT = 2
+    STATE_HANDLING_PLAZA = 3
 
     def __init__(self):
         super().__init__('voronoi_navigator')
@@ -248,7 +284,7 @@ class VoronoiNavigator(Node):
         self.declare_parameter('kp_side', 0.25)
         self.declare_parameter('kd_side', 0.025)
         self.declare_parameter('target_linear_speed', 0.35)
-        self.declare_parameter('max_angular_speed', 0.08)  # Reduced baseline max angular speed
+        self.declare_parameter('max_angular_speed', 0.08)
         self.declare_parameter('smoothing_factor', 0.15)
         self.declare_parameter('obstacle_threshold', 0.45)
         self.declare_parameter('forward_fov_deg', 40.0)
@@ -278,14 +314,15 @@ class VoronoiNavigator(Node):
         self.declare_parameter('min_split_duration', 3.0)                
         self.declare_parameter('require_target_area_confirmation', True) 
 
-        # Dynamic Angular Adaptation Parameters
+        # Dynamic Angular Adaptation & Path Target Parameters
         self.declare_parameter('target_gray', 255)
         self.declare_parameter('sidewalk_mask_topic', '/camera/sidewalk_mask')
-        self.declare_parameter('max_angular_speed_limit', 0.22)          # Dynamic absolute ceiling
-        self.declare_parameter('angular_speed_scaling_factor', 1.8)       # Curve sharpness scaling factor (alpha)
-        self.declare_parameter('angular_influence_on_linear', 0.3)        # Decouple factor (was hardcoded to 0.7)
+        self.declare_parameter('max_angular_speed_limit', 0.22)
+        self.declare_parameter('phase1_max_angular_limit', 0.40)
+        self.declare_parameter('angular_speed_scaling_factor', 1.8)
+        self.declare_parameter('angular_influence_on_linear', 0.3)
 
-        # Retrieve standard configurations
+        # Retrieve configurations
         self.split_threshold = self.get_parameter('split_threshold').value
         self.split_exit_prob_threshold = self.get_parameter('split_exit_prob_threshold').value
         self.split_entry_area_threshold = self.get_parameter('split_entry_area_threshold').value
@@ -312,15 +349,25 @@ class VoronoiNavigator(Node):
 
         self.genuine_split_confirmed = False
         self.target_area_observed_high = False
-        self.declare_parameter('stop_pixel_threshold', 40000.0)  # Stop threshold for end node (dead end)
+        self.declare_parameter('stop_pixel_threshold', 40000.0)
+        
+        # Plaza Roundabout Navigation States
+        self.plaza_mode = False
+        self.plaza_direction = 'straight'
+        self.plaza_target_exit = 0
+        self.plaza_exit_counter = 0
+        self.passed_exit_lockout = False
+        self.plaza_edge_following = False
+        self.observing_bypass_exit = False  # Track active bypass observing
+
         # Variables for stop conditions
         self.latest_dest_type = "none"
-        self.initial_sidewalk_pixels = None  # Tracks baseline to ensure initialization checks clear
+        self.initial_sidewalk_pixels = None
         self.split_baseline_pixels = None
         self.capture_split_baseline = False
         self.current_sidewalk_pixels = 0.0
 
-        # Initialize Control Engine with decoupling parameters
+        # Initialize Control Engine
         self.engine = VoronoiNavigationEngine(
             kp_area=self.get_parameter('kp_area').value,
             kd_area=self.get_parameter('kd_area').value,
@@ -385,7 +432,6 @@ class VoronoiNavigator(Node):
             depth=1
         )
         
-        # New direct subscription to image mask to track total sidewalk content
         self.mask_sub = self.create_subscription(
             Image,
             self.get_parameter('sidewalk_mask_topic').value,
@@ -421,7 +467,6 @@ class VoronoiNavigator(Node):
         self.scan_sub = self.create_subscription(
             LaserScan, '/scan', self.scan_callback, self.latest_only_qos, callback_group=callback_group
         )
-        # ... (Subscribers section of __init__)
         self.dest_type_sub = self.create_subscription(
             String, '/global_planner/destination_type', self.destination_type_callback, 10, callback_group=callback_group
         )
@@ -429,40 +474,53 @@ class VoronoiNavigator(Node):
         self.get_logger().info("Voronoi Navigator initialized with Dynamic Angular scaling.")
 
     def mask_callback(self, msg: Image):
-        """Processes raw binary mask to count total current sidewalk pixels."""
         try:
             target_val = self.get_parameter('target_gray').value
-            # Convert raw bytes array to NumPy buffer for high-rate processing
             mask_data = np.frombuffer(msg.data, dtype=np.uint8)
             current_pixels = float(np.sum(mask_data == target_val))
             
             with self.lock:
                 self.current_sidewalk_pixels = current_pixels
                 
-                # Check general run initialization calibration
                 if self.initial_sidewalk_pixels is None or self.initial_sidewalk_pixels == 0.0:
                     if current_pixels > 1000.0:
                         self.initial_sidewalk_pixels = current_pixels
                 
-                # Only capture the split baseline value when triggered on state transition
                 if self.capture_split_baseline:
                     if current_pixels > 1000.0:
                         self.split_baseline_pixels = current_pixels
                         self.capture_split_baseline = False
-                        self.get_logger().info(f"CALIBRATION: Split baseline captured asynchronously: {self.split_baseline_pixels} pixels.")
+                        self.get_logger().info(f"CALIBRATION: Split baseline captured: {self.split_baseline_pixels} pixels.")
         except Exception as e:
             self.get_logger().error(f"Error parsing sidewalk mask: {str(e)}")
 
     def target_direction_callback(self, msg: String):
         with self.lock:
             direction = msg.data.lower()
-            if direction in ['straight', 'left', 'right', 'stop']:
-                if self.active_split_direction != direction:
-                    self.active_split_direction = direction
-                    self.get_logger().info(f"COORDINATION: Split direction updated dynamically to -> {direction.upper()}")
+            
+            plaza_match = re.search(r'plaza[_-]?(left|right)[_-]?(\d+)', direction) or \
+                          re.search(r'plaza:(left|right):(\d+)', direction)
+            
+            if plaza_match:
+                self.plaza_direction = plaza_match.group(1)
+                self.plaza_target_exit = int(plaza_match.group(2))
+                self.plaza_mode = True
+                self.plaza_exit_counter = 0
+                self.passed_exit_lockout = True
+                self.plaza_edge_following = False
+                self.observing_bypass_exit = False
+                self.active_split_direction = direction
+                self.get_logger().info(
+                    f"COORDINATION: PLAZA MODE ACTIVATED. Target: {self.plaza_direction.upper()} exit #{self.plaza_target_exit}"
+                )
+            else:
+                if direction in ['straight', 'left', 'right', 'stop']:
+                    if self.active_split_direction != direction:
+                        self.active_split_direction = direction
+                        self.plaza_mode = False
+                        self.get_logger().info(f"COORDINATION: Split direction updated dynamically to -> {direction.upper()}")
 
     def destination_type_callback(self, msg: String):
-        """Processes the upcoming target node type from the global planner."""
         with self.lock:
             self.latest_dest_type = msg.data.lower()
 
@@ -511,7 +569,8 @@ class VoronoiNavigator(Node):
                 if p0_y > p1_y:
                     p0_x, p0_y, p1_x, p1_y = p1_x, p1_y, p0_x, p0_y
                 angle = math.atan2(p1_y - p0_y, p1_x - p0_x) * 180.0 / math.pi
-                self.latest_candidate_paths.append((angle, p1_x))
+                length = math.hypot(p1_x - p0_x, p1_y - p0_y)
+                self.latest_candidate_paths.append((angle, p1_x, length))
 
     def side_mid_callback(self, msg: Float32):
         with self.lock: self.latest_side_mid_x = msg.data if msg.data >= 0.0 else None
@@ -569,7 +628,7 @@ class VoronoiNavigator(Node):
         offset = self.engine.image_width * 0.104
         left_bound, right_bound = center_x - offset, center_x + offset
 
-        for path_angle, path_top_x in candidate_paths:
+        for path_angle, path_top_x, _ in candidate_paths:
             if (70.0 <= path_angle <= 110.0) or (left_bound <= path_top_x <= right_bound):
                 straight_detected = True
             if (path_angle > 110.0) and (path_top_x < left_bound):
@@ -591,9 +650,10 @@ class VoronoiNavigator(Node):
         consecutive_frames_threshold_in = self.get_parameter('consecutive_frames_threshold_in').value
         consecutive_frames_threshold_out = self.get_parameter('consecutive_frames_threshold_out').value
 
-        # Calculate dynamic max angular speed bound based on current mask ratio
+        # Dynamic angular calculation constraints
         base_max_angular = self.get_parameter('max_angular_speed').value
         limit_max_angular = self.get_parameter('max_angular_speed_limit').value
+        phase1_max_angular_limit = self.get_parameter('phase1_max_angular_limit').value
         alpha = self.get_parameter('angular_speed_scaling_factor').value
 
         with self.lock:
@@ -616,16 +676,17 @@ class VoronoiNavigator(Node):
             
             initial_px = self.initial_sidewalk_pixels
             dest_type = self.latest_dest_type
+            
+            plaza_direction = self.plaza_direction
+            plaza_edge_following = self.plaza_edge_following
 
         # =====================================================================
         # TARGET DESTINATION REACHED - SYSTEM TERMINATION CONDITIONS
         # =====================================================================
         if dest_type == "end_node":
-            # Must ensure node has successfully calibrated a general running baseline first
             if initial_px is not None and current_px < self.get_parameter('stop_pixel_threshold').value:
                 self.get_logger().info(f"STOP CONDITION: Reached End Node destination. Pixels ({current_px:.1f}) below threshold. Shutting down.")
                 
-                # Notify global planner to terminate as well
                 completion_msg = String()
                 completion_msg.data = "reached_destination"
                 self.turn_completed_pub.publish(completion_msg)
@@ -637,7 +698,6 @@ class VoronoiNavigator(Node):
         elif dest_type == "split_node" and nav_state == self.STATE_HANDLING_SPLIT:
             self.get_logger().info("STOP CONDITION: Reached Split Node destination and entered [STATE_HANDLING_SPLIT]. Shutting down.")
             
-            # Notify global planner to terminate as well
             completion_msg = String()
             completion_msg.data = "reached_destination"
             self.turn_completed_pub.publish(completion_msg)
@@ -647,22 +707,22 @@ class VoronoiNavigator(Node):
             return
 
         # =====================================================================
-        # CONTINUOUS VORONOI CONTROL CALCULATIONS (REST OF THE METHOD)
+        # DYNAMIC MAX ANGULAR SPEED DETERMINATION
         # =====================================================================
-       
-        # Scale angular limits ONLY when active split execution is underway
-        if nav_state == self.STATE_HANDLING_SPLIT and split_baseline_px is not None and split_baseline_px > 0.0:
+        if (nav_state == self.STATE_HANDLING_SPLIT or nav_state == self.STATE_HANDLING_PLAZA) and split_baseline_px is not None and split_baseline_px > 0.0:
             ratio = current_px / split_baseline_px 
-            ratio = max(0.01, min(1.0, ratio)) # Clamp ratio to safe bounds
+            ratio = max(0.01, min(1.0, ratio))
             
-            # Dynamic max speed scales up as ratio drops below 1.0 (indicating loss of concrete surface)
             dynamic_max_angular = base_max_angular * (0.65 + alpha * (1.0 - ratio))
-            dynamic_max_angular = min(limit_max_angular, dynamic_max_angular)
+            
+            if nav_state == self.STATE_HANDLING_PLAZA and not plaza_edge_following:
+                dynamic_max_angular = min(phase1_max_angular_limit, dynamic_max_angular * 1.8)
+                dynamic_max_angular = max(dynamic_max_angular, phase1_max_angular_limit * 0.8)
+            else:
+                dynamic_max_angular = min(limit_max_angular, dynamic_max_angular)
         else:
-            # Fall back to baseline for normal centered navigation
             dynamic_max_angular = base_max_angular
 
-        # Assign calculated max angular constraint directly to control engine
         self.engine.max_angular_speed = dynamic_max_angular
 
         if split_direction == 'stop':
@@ -680,7 +740,7 @@ class VoronoiNavigator(Node):
         if self.nav_state == self.STATE_SPLIT_AHEAD:
             self.classify_current_frame_ways(area_left, area_right, candidate_paths)
 
-        if self.nav_state == self.STATE_HANDLING_SPLIT:
+        if self.nav_state == self.STATE_HANDLING_SPLIT or self.nav_state == self.STATE_HANDLING_PLAZA:
             any_area_big = (avg_left >= self.split_exit_area_threshold or avg_right >= self.split_exit_area_threshold)
         else:
             any_area_big = (area_left >= self.split_entry_area_threshold or area_right >= self.split_entry_area_threshold)
@@ -703,12 +763,24 @@ class VoronoiNavigator(Node):
                 self.reset_split_ways_record()
                 if areas_opened_confirmed:
                     self.classify_current_frame_ways(area_left, area_right, candidate_paths)
-                    self.nav_state = self.STATE_HANDLING_SPLIT
-                    self.split_handling_start_time = time.time()
-                    self.genuine_split_confirmed = False
-                    self.target_area_observed_high = False
                     
-                    # Capture current split baseline immediately or signal next frame capture
+                    if self.plaza_mode:
+                        self.nav_state = self.STATE_HANDLING_PLAZA
+                        self.plaza_exit_counter = 0
+                        self.passed_exit_lockout = True
+                        self.plaza_edge_following = False
+                        self.observing_bypass_exit = False
+                        self.split_handling_start_time = time.time()
+                        self.genuine_split_confirmed = False
+                        self.target_area_observed_high = False
+                        self.get_logger().info(f"STATE TRANSITION: [NORMAL] -> [HANDLING PLAZA] (Target: {self.plaza_direction.upper()} exit #{self.plaza_target_exit})")
+                    else:
+                        self.nav_state = self.STATE_HANDLING_SPLIT
+                        self.split_handling_start_time = time.time()
+                        self.genuine_split_confirmed = False
+                        self.target_area_observed_high = False
+                        self.get_logger().info(f"STATE TRANSITION: [NORMAL] -> [HANDLING SPLIT] (Dir: {split_direction.upper()})")
+                    
                     with self.lock:
                         if self.current_sidewalk_pixels > 1000.0:
                             self.split_baseline_pixels = self.current_sidewalk_pixels
@@ -717,8 +789,6 @@ class VoronoiNavigator(Node):
                         else:
                             self.split_baseline_pixels = None
                             self.capture_split_baseline = True
-
-                    self.get_logger().info(f"STATE TRANSITION: [NORMAL] -> [HANDLING SPLIT] (Dir: {split_direction.upper()})")
                     self.log_final_split_summary()
                 else:
                     self.nav_state = self.STATE_SPLIT_AHEAD
@@ -726,12 +796,23 @@ class VoronoiNavigator(Node):
 
         elif self.nav_state == self.STATE_SPLIT_AHEAD:
             if areas_opened_confirmed:
-                self.nav_state = self.STATE_HANDLING_SPLIT
-                self.split_handling_start_time = time.time()
-                self.genuine_split_confirmed = False
-                self.target_area_observed_high = False
+                if self.plaza_mode:
+                    self.nav_state = self.STATE_HANDLING_PLAZA
+                    self.plaza_exit_counter = 0
+                    self.passed_exit_lockout = True
+                    self.plaza_edge_following = False
+                    self.observing_bypass_exit = False
+                    self.split_handling_start_time = time.time()
+                    self.genuine_split_confirmed = False
+                    self.target_area_observed_high = False
+                    self.get_logger().info(f"STATE TRANSITION: [SPLIT AHEAD] -> [HANDLING PLAZA] (Target: {self.plaza_direction.upper()} exit #{self.plaza_target_exit})")
+                else:
+                    self.nav_state = self.STATE_HANDLING_SPLIT
+                    self.split_handling_start_time = time.time()
+                    self.genuine_split_confirmed = False
+                    self.target_area_observed_high = False
+                    self.get_logger().info(f"STATE TRANSITION: [SPLIT AHEAD] -> [HANDLING SPLIT] (Dir: {split_direction.upper()})")
                 
-                # Capture current split baseline immediately or signal next frame capture
                 with self.lock:
                     if self.current_sidewalk_pixels > 1000.0:
                         self.split_baseline_pixels = self.current_sidewalk_pixels
@@ -740,8 +821,6 @@ class VoronoiNavigator(Node):
                     else:
                         self.split_baseline_pixels = None
                         self.capture_split_baseline = True
-
-                self.get_logger().info(f"STATE TRANSITION: [SPLIT AHEAD] -> [HANDLING SPLIT] (Dir: {split_direction.upper()})")
                 self.log_final_split_summary()
             
             elif split_avg < self.split_threshold:
@@ -782,12 +861,59 @@ class VoronoiNavigator(Node):
                 else:
                     self.get_logger().warn(
                         f"STATE TRANSITION: [HANDLING SPLIT] -> [NORMAL] (Exited, but DISMISSED as transient noise! Duration: {duration:.2f}s). "
-                        f"No clearance message sent to global planner. "
-                        f"Requires minimum duration >= {self.min_split_duration}s (current: {duration:.2f}s) and "
-                        f"target_area_observed_high={self.target_area_observed_high} (current: {self.target_area_observed_high})."
+                        f"No clearance message sent to global planner."
                     )
 
-        handling_split_flag = (self.nav_state == self.STATE_HANDLING_SPLIT)
+        elif self.nav_state == self.STATE_HANDLING_PLAZA:
+            duration = time.time() - self.split_handling_start_time
+            
+            if not plaza_edge_following:
+                if plaza_direction == 'right' and area_right < 1000.0:
+                    with self.lock:
+                        self.plaza_edge_following = True
+                        plaza_edge_following = True
+                    self.get_logger().info("PLAZA: Right side vector stabilized. Switching to edge-following controls.")
+                elif plaza_direction == 'left' and area_left < 1000.0:
+                    with self.lock:
+                        self.plaza_edge_following = True
+                        plaza_edge_following = True
+                    self.get_logger().info("PLAZA: Left side vector stabilized. Switching to edge-following controls.")
+
+            # Hysteresis and exit target tracking:
+            # Checking if target exit verification is triggered
+            if self.plaza_exit_counter == self.plaza_target_exit:
+                if self.plaza_direction == 'left' and avg_left >= self.way_area_threshold:
+                    self.target_area_observed_high = True
+                elif self.plaza_direction == 'right' and avg_right >= self.way_area_threshold:
+                    self.target_area_observed_high = True
+                elif self.plaza_direction == 'straight' and (avg_left >= self.way_area_threshold or avg_right >= self.way_area_threshold):
+                    self.target_area_observed_high = True
+                
+                if duration >= self.min_split_duration and self.target_area_observed_high:
+                    if not self.genuine_split_confirmed:
+                        self.genuine_split_confirmed = True
+                        self.get_logger().info(f"COORDINATION: Plaza target exit reached and execution verified ({duration:.1f}s).")
+
+                if areas_cleared_confirmed:
+                    self.nav_state = self.STATE_NORMAL
+                    self.large_area_consecutive_count = 0
+                    self.clear_area_consecutive_count = 0
+                    self.plaza_mode = False
+                    self.plaza_edge_following = False
+                    
+                    if self.genuine_split_confirmed:
+                        self.get_logger().info(f"STATE TRANSITION: [HANDLING PLAZA] -> [NORMAL] (Target Exit #{self.plaza_target_exit} cleared!)")
+                        
+                        completion_msg = String()
+                        completion_msg.data = "completed"
+                        self.turn_completed_pub.publish(completion_msg)
+                        self.get_logger().info("COORDINATION: Sent plaza clearance signal to global planner.")
+                    else:
+                        self.get_logger().warn(
+                            f"STATE TRANSITION: [HANDLING PLAZA] -> [NORMAL] (Exited, but plaza trajectory dismissed as noise!)"
+                        )
+
+        handling_split_flag = (self.nav_state == self.STATE_HANDLING_SPLIT or self.nav_state == self.STATE_HANDLING_PLAZA)
 
         if not handling_split_flag and self._was_handling_split:
             self.engine.prev_time = None
@@ -798,17 +924,107 @@ class VoronoiNavigator(Node):
             if path_x is not None: path_x = 2.0 * center_x - path_x
             if side_mid_x is not None: side_mid_x = 2.0 * center_x - side_mid_x
             
+        # =====================================================================
+        # PLAZA DYNAMIC CONTROLS (PATH TARGETING & TRACKING)
+        # =====================================================================
+        plaza_target_x = self.engine.image_width / 2.0
+        feedback_path_x = path_x if path_x is not None else (self.engine.image_width / 2.0)
+        current_split_dir = split_direction
+
+        if self.nav_state == self.STATE_HANDLING_PLAZA:
+            image_width = self.engine.image_width
+            
+            if plaza_direction == 'right':
+                plaza_target_x = image_width * 0.75
+                current_split_dir = 'right'
+            else:
+                plaza_target_x = image_width * 0.25
+                current_split_dir = 'left'
+
+            if self.plaza_edge_following:
+                # Isolate consistent paths with great magnitude (length > 120.0)
+                consistent_paths = [c for c in candidate_paths if c[2] > 120.0]
+                
+                side_path_detected = False
+                selected_path_x = None
+                
+                if consistent_paths:
+                    if plaza_direction == 'right':
+                        best_path = max(consistent_paths, key=lambda c: c[1])
+                        # If the selected candidate is to the right side of the image
+                        if best_path[1] > image_width * 0.55:
+                            side_path_detected = True
+                            selected_path_x = best_path[1]
+                    else:
+                        best_path = min(consistent_paths, key=lambda c: c[1])
+                        # If the selected candidate is to the left side of the image
+                        if best_path[1] < image_width * 0.45:
+                            side_path_detected = True
+                            selected_path_x = best_path[1]
+
+                # Modification: Transition state machine to verify branch clearance and integration
+                if not self.observing_bypass_exit:
+                    if side_path_detected:
+                        self.observing_bypass_exit = True
+                        self.get_logger().info(
+                            f"PLAZA: Detected bypass candidate branch at X: {selected_path_x:.1f}. "
+                            f"Target exit index is #{self.plaza_exit_counter + 1}."
+                        )
+                else:
+                    # Transition check: Did the tracked forward candidate path disappear while side vector is active?
+                    side_vector_valid = (side_mid_x is not None and side_dist is not None and side_dist > 0.0)
+                    if not side_path_detected and side_vector_valid:
+                        self.plaza_exit_counter += 1
+                        self.observing_bypass_exit = False
+                        self.get_logger().info(
+                            f"PLAZA: Branch cleared and transitioned into side vector. "
+                            f"Incremented exit count to #{self.plaza_exit_counter}."
+                        )
+
+                # Route control coordinates based on whether we are observing our target exit
+                if self.observing_bypass_exit:
+                    if self.plaza_exit_counter + 1 == self.plaza_target_exit:
+                        # Target exit: guide straight through the middle
+                        feedback_path_x = image_width / 2.0
+                    else:
+                        # Bypass exit: put the path's x coordinate to the side
+                        feedback_path_x = selected_path_x
+                else:
+                    # Normal Phase 2 (wall / boundary following fallback)
+                    if path_x is not None:
+                        feedback_path_x = path_x
+                    else:
+                        feedback_path_x = image_width / 2.0
+
         linear_vel, angular_vel = self.engine.compute_controls(
-            area_left, area_right, path_x, side_mid_x, side_dist, scan_dist, self.obstacle_threshold,
-            handling_split=handling_split_flag, split_direction=split_direction,
-            split_turn_kp=split_turn_kp, split_turn_kd=split_turn_kd
+            area_left, area_right, feedback_path_x, side_mid_x, side_dist, scan_dist, self.obstacle_threshold,
+            handling_split=handling_split_flag, split_direction=current_split_dir,
+            split_turn_kp=split_turn_kp, split_turn_kd=split_turn_kd,
+            handling_plaza=(self.nav_state == self.STATE_HANDLING_PLAZA),
+            plaza_direction=plaza_direction, plaza_edge_following=self.plaza_edge_following,
+            plaza_target_x=plaza_target_x
         )
         
+        # Phase 2 Turn Assist Logic from overall binary mask drop
+        plaza_turn_assist = 0.0
+        if self.nav_state == self.STATE_HANDLING_PLAZA and self.plaza_edge_following:
+            baseline = split_baseline_px if (split_baseline_px is not None and split_baseline_px > 0.0) else 40000.0
+            if current_px < baseline * 0.9:
+                drop_ratio = (baseline * 0.9 - current_px) / (baseline * 0.9)
+                drop_ratio = max(0.0, min(1.0, drop_ratio))
+                
+                max_assist_bias = 0.8
+                if plaza_direction == 'right':
+                    plaza_turn_assist = max_assist_bias * drop_ratio
+                else:
+                    plaza_turn_assist = -max_assist_bias * drop_ratio
+                
+                angular_vel += plaza_turn_assist
+
         self._was_handling_split = handling_split_flag
         
-        # Diagnostics Formatting
         raw_diff = area_left - area_right
-        path_str = f"PathX: {path_x:5.1f}" if path_x is not None else "PathX: None"
+        path_str = f"PathX: {feedback_path_x:5.1f}" if feedback_path_x is not None else "PathX: None"
         side_str = f"SideX: {side_mid_x:5.1f}" if side_mid_x is not None else "SideX: None"
         dist_str = f"SideDist: {side_dist:5.1f}" if side_dist is not None else "SideDist: None"
         
@@ -817,9 +1033,8 @@ class VoronoiNavigator(Node):
         else:
             prob_str = f"SPLIT PROB: {split_prob*100.0:5.1f}% (Avg (Delayed): N/A {history_length}/15)"
 
-        # Diagnostics Output (includes dynamic max angular status)
         layout_str = ""
-        if self.nav_state != self.STATE_NORMAL:
+        if self.nav_state == self.STATE_SPLIT_AHEAD or self.nav_state == self.STATE_HANDLING_SPLIT:
             tf = self.split_ways_record['total_frames']
             if tf > 0:
                 pct_l = (self.split_ways_record['left'] / tf) * 100.0
@@ -844,7 +1059,17 @@ class VoronoiNavigator(Node):
             reasons_str = ", ".join(reasons)
             
             opp_str = " | OPPOSITE GUARDRAIL ACTIVE!" if self.engine.opposite_target_active else ""
-            status_str = f"STATUS: [SPLIT ACTIVE ({layout_str}) (Held by: {reasons_str}) | DIR: {split_direction.upper()} (ARC TURN){opp_str}]"
+            status_str = f"STATUS: [SPLIT ACTIVE ({layout_str}) (Held by: {reasons_str}) | DIR: {current_split_dir.upper()} (ARC TURN){opp_str}]"
+        elif self.nav_state == self.STATE_HANDLING_PLAZA:
+            lockout_str = "LOCKED" if self.passed_exit_lockout else "OPEN"
+            phase_str = "PHASE 2 (EDGE FOLLOWING)" if plaza_edge_following else "PHASE 1 (ENTRY SHARP TURN)"
+            
+            status_str = (
+                f"STATUS: [HANDLING PLAZA | {phase_str} | TARGET DIRECTION: {plaza_direction.upper()} | "
+                f"Exits passed: {self.plaza_exit_counter}/{self.plaza_target_exit} | "
+                f"Hysteresis lockout: {lockout_str} | Active Steer Target: {current_split_dir.upper()} | "
+                f"Assist: {plaza_turn_assist:.3f}]"
+            )
         
         self.get_logger().info(
             f"Areas -> L: {area_left:6.1f} | R: {area_right:6.1f} | "
@@ -865,7 +1090,6 @@ class VoronoiNavigator(Node):
 
 
 def main(args=None):
-    import rclpy
     rclpy.init(args=args)
     node = VoronoiNavigator()
     executor = MultiThreadedExecutor()
@@ -875,7 +1099,6 @@ def main(args=None):
     except KeyboardInterrupt:
         pass
     finally:
-        # Guard cleanup to prevent RCLError if ROS 2 has already shut down the context
         if rclpy.ok():
             node.publish_stop_cmd()
             node.destroy_node()
