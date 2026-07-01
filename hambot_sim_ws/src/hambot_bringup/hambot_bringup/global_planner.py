@@ -601,8 +601,9 @@ class GlobalPlannerNode(Node):
                 )
                 self.turn_sequence.append((entry_node.name, command_str))
                 
-                # Advance i by 2 to skip both the plaza center node itself and its exit portal step
-                i += 2
+                # Advance i by 3 to skip both the plaza center node itself and its exit portal step
+                # and the exit to the next node
+                i += 3
                 continue
                 
             # If current_node is a plaza center node (which could happen if we start at the plaza or pathing fallback),

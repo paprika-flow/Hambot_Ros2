@@ -1025,8 +1025,8 @@ class VoronoiNavigator(Node):
             # PHASE TRANSITIONS (Now evaluating 3 consecutive frames of measurements)
             if self.plaza_phase == 1:
                 # Check if opposite side vector decreases significantly upon branch entrance
-                is_entering = (plaza_direction == 'right' and area_left + 3000 < area_right) or \
-                              (plaza_direction == 'left' and area_right + 3000 < area_left)
+                is_entering = (plaza_direction == 'right' and area_left + 4000 < area_right and area_left < 4000) or \
+                              (plaza_direction == 'left' and area_right + 4000 < area_left and area_right < 4000)
                 if is_entering:
                     self.phase2_entry_frames += 1
                     self.phase1_entry_frames = 0
@@ -1118,9 +1118,9 @@ class VoronoiNavigator(Node):
                     
                     max_assist_bias = 0.8
                     if plaza_direction == 'right':
-                        plaza_turn_assist = max_assist_bias * drop_ratio
+                        plaza_turn_assist = max_assist_bias * drop_ratio + 0.5
                     elif plaza_direction == 'left':
-                        plaza_turn_assist = -max_assist_bias * drop_ratio
+                        plaza_turn_assist = -max_assist_bias * drop_ratio - 0.5
                             
                 angular_vel += plaza_turn_assist 
 
